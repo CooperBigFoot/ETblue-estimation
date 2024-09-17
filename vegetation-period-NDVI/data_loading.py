@@ -54,7 +54,9 @@ def add_variables(image: ee.Image) -> ee.Image:
         ee.Image: Image with added bands and cloud mask applied.
     """
     ndvi = image.normalizedDifference(["B8", "B4"]).rename("NDVI")
-    lswi = image.normalizedDifference(["B8", "B11"]).rename("LSWI") # Land Surface Water Index
+    lswi = image.normalizedDifference(["B8", "B11"]).rename(
+        "LSWI"
+    )  # Land Surface Water Index
 
     # Create cloud mask
     cloud_mask = (
@@ -76,6 +78,34 @@ def add_variables(image: ee.Image) -> ee.Image:
     )
 
 
+def ndvi_band_to_int(image: ee.Image) -> ee.Image:
+    """
+    Convert the NDVI band of the image to an integer representation.
+
+    Args:
+        image (ee.Image): Input image with NDVI band.
+
+    Returns:
+        ee.Image: Image with NDVI band converted to integer representation.
+    """
+    ndvi_int = image.select("NDVI").multiply(10000).toInt16()
+    return image.addBands(ndvi_int, overwrite=True)
+
+
+def ndvi_band_to_float(image: ee.Image) -> ee.Image:
+    """
+    Convert the NDVI band of the image from integer to float representation.
+
+    Args:
+        image (ee.Image): Input image with NDVI band in integer representation.
+
+    Returns:
+        ee.Image: Image with NDVI band converted to float representation.
+    """
+    ndvi_float = image.select("NDVI").toFloat().divide(10000)
+    return image.addBands(ndvi_float, overwrite=True)
+
+
 def add_time_data(image: ee.Image) -> ee.Image:
     """
     Add time-related bands to the image.
@@ -86,8 +116,10 @@ def add_time_data(image: ee.Image) -> ee.Image:
     Returns:
         ee.Image: Image with added time-related bands.
     """
-    date = ee.Date(image.get("system:time_start")) # contains Unix time in milliseconds
-    years = date.difference(ee.Date("1970-01-01"), "year") # difference in years from Unix time
+    date = ee.Date(image.get("system:time_start"))  # contains Unix time in milliseconds
+    years = date.difference(
+        ee.Date("1970-01-01"), "year"
+    )  # difference in years from Unix time
 
     return image.addBands(ee.Image(years).rename("t").float()).addBands(
         ee.Image.constant(1)
