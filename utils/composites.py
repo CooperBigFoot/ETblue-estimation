@@ -1,3 +1,5 @@
+# Original js scripts are found at https://earthengine.googlesource.com/users/hydrosolutions/public_functions/
+
 import ee
 from typing import List, Dict, Any, Optional
 

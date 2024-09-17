@@ -1,3 +1,6 @@
+# Original js scripts are found at https://earthengine.googlesource.com/users/soilwatch/soilErosionApp/
+
+
 import ee
 from typing import Any, Callable, Dict
 
