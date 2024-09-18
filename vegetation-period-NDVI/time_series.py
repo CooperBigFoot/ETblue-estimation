@@ -1,7 +1,7 @@
 import ee
 import math
 from typing import List, Dict, Any
-from utils import harmonized_ts
+from utils.composites import harmonized_ts
 from data_loading import (
     load_sentinel2_data,
     ndvi_band_to_int,
@@ -13,6 +13,7 @@ from data_loading import (
 ee.Initialize(project="thurgau-irrigation")
 
 
+# TODO: check return types. The nested list should be ee.List but it is a ee.ComputedObject.. why?
 def extract_time_ranges(time_range: List[str], agg_interval: int) -> ee.List:
     """
     Extract time intervals for generating temporal composites from Sentinel collections.
@@ -22,67 +23,46 @@ def extract_time_ranges(time_range: List[str], agg_interval: int) -> ee.List:
         agg_interval (int): Number of days for each interval.
 
     Returns:
-        ee.List: List of time intervals. The list looks like [[start_date, end_date], ...].
+        ee.List: List of time intervals. Each interval is an ee.List with [start_date, end_date].
     """
     start_date = ee.Date(time_range[0])
     end_date = ee.Date(time_range[1])
 
-    # Calculate the number of intervals
-    interval_no = end_date.difference(start_date, "day").divide(agg_interval).round()
+    interval_no = (
+        ee.Date(time_range[1])
+        .difference(ee.Date(time_range[0]), "day")
+        .divide(agg_interval)
+        .round()
+    )
     month_check = ee.Number(30).divide(agg_interval).ceil()
-
-    # Calculate relative delta
     rel_delta = (
-        end_date.difference(start_date, "day")
+        ee.Number(end_date.difference(start_date, "day"))
         .divide(ee.Number(30.5).multiply(interval_no))
         .ceil()
     )
 
-    # Adjusted end date based on relative delta
-    adjusted_end_date = start_date.advance(
+    end_date = start_date.advance(
         start_date.advance(rel_delta, "month")
         .difference(start_date, "day")
         .divide(month_check),
         "day",
     )
 
-    # Initialize the list with the first interval
-    time_intervals = ee.List([ee.List([start_date, adjusted_end_date])])
+    time_intervals = ee.List([ee.List([start_date, end_date])])
 
     def add_interval(x, previous):
-        """
-        Adds a new interval to the list of previous intervals.
-
-        Args:
-            x: Iterator variable (not used).
-            previous: The accumulated list of intervals.
-
-        Returns:
-            ee.List: Updated list of intervals with the new interval added.
-        """
-        previous = ee.List(previous)
-
-        # Reverse the list to get the last interval
-        reversed_previous = previous.reverse()
-
-        # Get the first element from the reversed list (i.e., the last interval)
-        last_interval = ee.List(reversed_previous.get(0))
-
-        # Extract the end date of the last interval
-        last_interval_end_date = ee.Date(last_interval.get(1))
-
-        # Calculate the new end date
-        new_end_date = last_interval_end_date.advance(
-            last_interval_end_date.advance(rel_delta, "month")
-            .difference(last_interval_end_date, "day")
+        x = ee.Number(x)
+        start_date1 = ee.Date(
+            ee.List(ee.List(previous).reverse().get(0)).get(1)
+        )  # end_date of last element
+        end_date1 = start_date1.advance(
+            start_date1.advance(rel_delta, "month")
+            .difference(start_date1, "day")
             .divide(month_check),
             "day",
         )
+        return ee.List(previous).add(ee.List([start_date1, end_date1]))
 
-        # Add the new interval to the list
-        return previous.add(ee.List([last_interval_end_date, new_end_date]))
-
-    # Iterate to build all intervals
     time_intervals = ee.List(
         ee.List.sequence(2, interval_no).iterate(add_interval, time_intervals)
     )
@@ -99,20 +79,24 @@ def get_harmonic_ts(
     Args:
         year (int): The year for which to generate the time series.
         aoi (ee.Geometry): The area of interest.
-        time_intervals (ee.List): List of time intervals.
+        time_intervals (ee.List): List of time intervals for aggregation.
 
     Returns:
         ee.ImageCollection: Harmonized time series with fitted values.
     """
-
     yearly_sentinel_data = load_sentinel2_data(year, aoi)
-    cloud_filtered_data = yearly_sentinel_data.map(ndvi_band_to_int).map(
-        lambda img: ee.Image(img)
-    )
+
+    cloud_filtered_data = yearly_sentinel_data.map(ndvi_band_to_int)
 
     harmonized_data = harmonized_ts(
-        cloud_filtered_data, ["NDVI"], time_intervals, {"agg_type": "geomedian"}
+        cloud_filtered_data,
+        ["NDVI_int"],
+        time_intervals,
+        {"agg_type": "geomedian"},
     ).map(lambda img: ndvi_band_to_float(ee.Image(img)))
+
+    # Add 't' and 'constant' bands after harmonization
+    harmonized_data = harmonized_data.map(add_time_data)
 
     def replace_by_empty(
         harmonized_collection: ee.ImageCollection,
@@ -122,9 +106,9 @@ def get_harmonic_ts(
         """
         Replace the harmonized image with an empty image if no cloud-filtered images are found in the time range.
         """
-
-        start_date = ee.Date(ee.List(time_range).get(0))
-        end_date = ee.Date(ee.List(time_range).get(1))
+        time_range = ee.List(time_range)
+        start_date = ee.Date(time_range.get(0))
+        end_date = ee.Date(time_range.get(1))
         nb_imgs = cloud_filtered_collection.filterDate(start_date, end_date).size()
         img = harmonized_collection.filterDate(start_date, end_date).first()
 
@@ -147,7 +131,7 @@ def get_harmonic_ts(
                 harmonized_data, cloud_filtered_data, ee.List(list_item)
             )
         )
-    ).map(add_time_data)
+    )
 
     names = harmonized_data.first().bandNames()
 
@@ -155,11 +139,10 @@ def get_harmonic_ts(
         """
         Interpolate the image by averaging over a 30-day window centered on the current date.
         """
-
         current_date = ee.Date(image.get("system:time_start"))
         mean_filtered_image = harmonized_data.filterDate(
-            current_date.advance(-15 - 1, "day"), current_date.advance(15 + 1, "day")
-        ).reduce({"reducer": "mean", "parallelScale": 1})
+            current_date.advance(-15, "day"), current_date.advance(15, "day")
+        ).mean()
         return (
             mean_filtered_image.where(image, image)
             .rename(names)
@@ -168,10 +151,10 @@ def get_harmonic_ts(
 
     harmonized_data = ee.ImageCollection(harmonized_data.map(interpolate_image))
 
-    return add_fitted_values_values("NDVI", harmonized_data, 2)
+    return compute_fitted_values("NDVI", harmonized_data, 2)
 
 
-def add_fitted_values_values(
+def compute_fitted_values(
     vegetation_index: str,
     sentinel_image_collection: ee.ImageCollection,
     parallel_scale: int,
@@ -215,15 +198,11 @@ def add_fitted_values_values(
             ee.String(vegetation_index)
         )
     ).reduce(
-        {
-            "reducer": ee.Reducer.linearRegression(
-                harmonic_terms.slice(
-                    0, ee.Number(max_order).multiply(2).add(1)
-                ).length(),
-                1,
-            ),
-            "parallelScale": parallel_scale,
-        }
+        ee.Reducer.linearRegression(
+            harmonic_terms.slice(0, ee.Number(max_order).multiply(2).add(1)).length(),
+            1,
+        ),
+        parallel_scale,
     )
 
     regression_coefficients = (
@@ -238,13 +217,14 @@ def add_fitted_values_values(
         """
         Add fitted values to the image using harmonic regression coefficients.
         """
-        return image.addBands(
+        fitted = (
             image.select(
                 harmonic_terms.slice(0, ee.Number(max_order).multiply(2).add(1))
             )
             .multiply(regression_coefficients)
-            .reduce("sum")
+            .reduce(ee.Reducer.sum())
             .rename("fitted")
         )
+        return image.addBands(fitted)
 
     return harmonic_sentinel_collection.map(add_fitted_values)
