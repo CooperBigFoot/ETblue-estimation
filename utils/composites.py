@@ -1,5 +1,3 @@
-# Original js scripts are found at https://earthengine.googlesource.com/users/hydrosolutions/public_functions/
-
 import ee
 from typing import List, Dict, Any, Optional
 
@@ -10,7 +8,7 @@ ee.Initialize(project="thurgau-irrigation")
 def harmonized_ts(
     masked_collection: ee.ImageCollection,
     band_list: List[str],
-    time_intervals: List[List[ee.Date]],
+    time_intervals: ee.List,
     options: Optional[Dict[str, Any]] = None,
 ) -> ee.ImageCollection:
     """
@@ -22,8 +20,8 @@ def harmonized_ts(
     Args:
         masked_collection (ee.ImageCollection): The Sentinel-2 image collection with applied masks.
         band_list (List[str]): List of band names to include in the aggregation.
-        time_intervals (List[List[ee.Date]]): List of time intervals, each defined by a start and end ee.Date.
-        options (Optional[Dict[str, Any]]): Optional parameters.
+        time_intervals (ee.List): List of time intervals, each defined by a start and end ee.Date.
+        options (Dict[str, Any]): Optional parameters.
             - band_name (str): Name of the band for metadata. Defaults to 'NDVI'.
             - agg_type (str): Type of aggregation ('median', 'mean', 'geomedian', 'max', 'min'). Defaults to 'median'.
 
@@ -34,12 +32,12 @@ def harmonized_ts(
     band_name = options.get("band_name", "NDVI")
     agg_type = options.get("agg_type", "median")
 
-    def _stack_bands(time_interval: List[ee.Date], stack: ee.List) -> ee.List:
+    def _stack_bands(time_interval, stack):
         """
         Wrapper function for stacking the generated Sentinel-2 temporal aggregates.
 
         Args:
-            time_interval (List[ee.Date]): A list containing start and end ee.Date objects for the interval.
+            time_interval (ee.List): A list containing start and end ee.Date objects for the interval.
             stack (ee.List): The current list of aggregated images.
 
         Returns:
@@ -48,10 +46,10 @@ def harmonized_ts(
         aggregated_image = aggregate_stack(
             masked_collection,
             band_list,
-            time_interval,
+            ee.List(time_interval),
             {"agg_type": agg_type, "band_name": band_name},
         )
-        return stack.add(aggregated_image)
+        return ee.List(stack).add(aggregated_image)
 
     # Initialize an empty list to hold the aggregated images.
     initial_stack = ee.List([])
@@ -66,7 +64,7 @@ def harmonized_ts(
 def aggregate_stack(
     masked_collection: ee.ImageCollection,
     band_list: List[str],
-    time_interval: List[ee.Date],
+    time_interval: ee.List,
     options: Optional[Dict[str, Any]] = None,
 ) -> ee.Image:
     """
@@ -75,8 +73,8 @@ def aggregate_stack(
     Args:
         masked_collection (ee.ImageCollection): The Sentinel-2 image collection with applied masks.
         band_list (List[str]): List of band names to include in the aggregation.
-        time_interval (List[ee.Date]): A list containing start and end ee.Date objects for the interval.
-        options (Optional[Dict[str, Any]]): Optional parameters.
+        time_interval (ee.List): A list containing start and end ee.Date objects for the interval.
+        options (Dict[str, Any]): Optional parameters.
             - band_name (str): Name of the band for metadata. Defaults to 'NDVI'.
             - agg_type (str): Type of aggregation ('median', 'mean', 'geomedian', 'max', 'min'). Defaults to 'median'.
 
@@ -87,8 +85,8 @@ def aggregate_stack(
     band_name = options.get("band_name", "NDVI")
     agg_type = options.get("agg_type", "median")
 
-    start_date = ee.Date(time_interval[0])
-    end_date = ee.Date(time_interval[1])
+    start_date = ee.Date(time_interval.get(0))
+    end_date = ee.Date(time_interval.get(1))
     agg_interval_days = end_date.difference(start_date, "day")
 
     # Set the center of the time interval as the 'system:time_start' date.
