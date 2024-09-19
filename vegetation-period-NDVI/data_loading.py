@@ -22,6 +22,7 @@ def load_sentinel2_data(year: int, aoi: ee.Geometry) -> ee.ImageCollection:
     start_date = ee.Date.fromYMD(year, 1, 1)
     end_date = ee.Date.fromYMD(year, 12, 31)
 
+
     s2_filtered = load_image_collection(
         "COPERNICUS/S2_HARMONIZED", {"start": start_date, "end": end_date}, aoi
     ).filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 50))
@@ -79,6 +80,7 @@ def ndvi_band_to_int(image: ee.Image) -> ee.Image:
     Returns:
         ee.Image: Image with NDVI band converted to integer representation.
     """
+
     ndvi_int = image.select("NDVI").multiply(10000).toInt16().rename("NDVI_int")
     return image.addBands(ndvi_int)
 
@@ -107,14 +109,14 @@ def add_time_data(image: ee.Image) -> ee.Image:
     Returns:
         ee.Image: Image with added time-related bands.
     """
-    date = ee.Date(image.get("system:time_start"))  # contains Unix time in milliseconds
-    years = date.difference(
-        ee.Date("1970-01-01"), "year"
-    )  # difference in years from Unix time
+    date = ee.Date(image.get("system:time_start"))
 
-    return image.addBands(ee.Image(years).rename("t").float()).addBands(
-        ee.Image.constant(1)
-    )
+    years = date.difference(ee.Date("1970-01-01"), "year")
+
+    time_band = ee.Image(years).rename("t").float()
+    constant_band = ee.Image.constant(1)
+
+    return image.addBands(time_band).addBands(constant_band)
 
 
 def get_s2_images(

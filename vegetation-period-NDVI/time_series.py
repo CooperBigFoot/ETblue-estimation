@@ -13,7 +13,6 @@ from data_loading import (
 ee.Initialize(project="thurgau-irrigation")
 
 
-# TODO: check return types. The nested list should be ee.List but it is a ee.ComputedObject.. why?
 def extract_time_ranges(time_range: List[str], agg_interval: int) -> ee.List:
     """
     Extract time intervals for generating temporal composites from Sentinel collections.
@@ -85,8 +84,12 @@ def get_harmonic_ts(
         ee.ImageCollection: Harmonized time series with fitted values.
     """
     yearly_sentinel_data = load_sentinel2_data(year, aoi)
+    # print(f"Year {year}: Initial data size: {yearly_sentinel_data.size().getInfo()}")
 
     cloud_filtered_data = yearly_sentinel_data.map(ndvi_band_to_int)
+    # print(
+    #     f"Year {year}: Cloud-filtered data size: {cloud_filtered_data.size().getInfo()}"
+    # )
 
     harmonized_data = harmonized_ts(
         cloud_filtered_data,
@@ -94,6 +97,7 @@ def get_harmonic_ts(
         time_intervals,
         {"agg_type": "geomedian"},
     ).map(lambda img: ndvi_band_to_float(ee.Image(img)))
+    # print(f"Year {year}: Harmonized data size: {harmonized_data.size().getInfo()}")
 
     # Add 't' and 'constant' bands after harmonization
     harmonized_data = harmonized_data.map(add_time_data)
@@ -132,6 +136,9 @@ def get_harmonic_ts(
             )
         )
     )
+    # print(
+    #     f"Year {year}: Data size after replace_by_empty: {harmonized_data.size().getInfo()}"
+    # )
 
     names = harmonized_data.first().bandNames()
 
@@ -150,81 +157,97 @@ def get_harmonic_ts(
         )
 
     harmonized_data = ee.ImageCollection(harmonized_data.map(interpolate_image))
+    print(
+        f"Year {year}: Data size after interpolation: {harmonized_data.size().getInfo()}"
+    )
 
-    return compute_fitted_values("NDVI", harmonized_data, 2)
+    fitted_data = compute_harmonic_fit("NDVI", harmonized_data, 2)
+    # print(f"Year {year}: Fitted data size: {fitted_data.size().getInfo()}")
+    # print(
+    #     f"Year {year}: Fitted data band names: {fitted_data.first().bandNames().getInfo()}"
+    # )
+
+    return fitted_data
 
 
-def compute_fitted_values(
+TEMPORAL_FREQUENCY = 1  # Adjust this value as needed
+MAX_HARMONIC_ORDER = 2  # Adjust this value as needed
+
+
+def compute_harmonic_fit(
     vegetation_index: str,
-    sentinel_image_collection: ee.ImageCollection,
+    input_image_collection: ee.ImageCollection,
     parallel_scale: int,
 ) -> ee.ImageCollection:
     """
-    Compute fitted values using harmonic regression.
+    Compute fitted values using harmonic regression on a vegetation index time series.
 
     Args:
-        vegetation_index (str): Vegetation index to use (e.g., "NDVI").
-        sentinel_image_collection (ee.ImageCollection): Input sensor data.
+        vegetation_index (str): Name of the vegetation index band (e.g., "NDVI").
+        input_image_collection (ee.ImageCollection): Input image collection with vegetation index and time bands.
         parallel_scale (int): Parallel scale for computation.
 
     Returns:
-        ee.ImageCollection: Image collection with fitted values.
+        ee.ImageCollection: Image collection with original bands and an additional 'fitted' band.
     """
-    harmonic_terms = ee.List(["constant", "t", "cos", "sin", "cos2", "sin2"])
-    max_order = 2
-    omega = 1
+    harmonic_component_names = ee.List(
+        [
+            "constant",
+            "cos1",
+            "sin1",
+            "cos2",
+            "sin2",
+        ]
+    )
 
-    def add_harmonic_terms(image: ee.Image) -> ee.Image:
-        """
-        Add harmonic terms to the image.
-        """
-
-        time_radians = image.select("t").multiply(2 * omega * math.pi)
-        time_radians_2 = image.select("t").multiply(4 * omega * math.pi)
-
+    def add_harmonic_components(image: ee.Image) -> ee.Image:
+        """Add harmonic component bands to the image."""
+        time_radians = image.select("t").multiply(2 * TEMPORAL_FREQUENCY * math.pi)
+        time_radians_2x = image.select("t").multiply(4 * TEMPORAL_FREQUENCY * math.pi)
         return (
-            image.addBands(time_radians.cos().rename("cos"))
-            .addBands(time_radians.sin().rename("sin"))
-            .addBands(time_radians_2.cos().rename("cos2"))
-            .addBands(time_radians_2.sin().rename("sin2"))
+            image.addBands(time_radians.cos().rename("cos1"))
+            .addBands(time_radians.sin().rename("sin1"))
+            .addBands(time_radians_2x.cos().rename("cos2"))
+            .addBands(time_radians_2x.sin().rename("sin2"))
         )
 
-    harmonic_sentinel_collection = sentinel_image_collection.select(
+    harmonic_image_collection = input_image_collection.select(
         ee.List([ee.String(vegetation_index), "t", "constant"])
-    ).map(add_harmonic_terms)
+    ).map(add_harmonic_components)
 
-    harmonic_regression_result = harmonic_sentinel_collection.select(
-        harmonic_terms.slice(0, ee.Number(max_order).multiply(2).add(1)).add(
-            ee.String(vegetation_index)
-        )
-    ).reduce(
-        ee.Reducer.linearRegression(
-            harmonic_terms.slice(0, ee.Number(max_order).multiply(2).add(1)).length(),
-            1,
-        ),
-        parallel_scale,
+    regression_input_bands = harmonic_component_names.slice(
+        0, ee.Number(MAX_HARMONIC_ORDER).multiply(2).add(1)
+    ).add(ee.String(vegetation_index))
+
+    regression_result = harmonic_image_collection.select(regression_input_bands).reduce(
+        reducer=ee.Reducer.linearRegression(harmonic_component_names.length(), 1),
+        parallelScale=parallel_scale,
     )
 
     regression_coefficients = (
-        harmonic_regression_result.select("coefficients")
+        regression_result.select("coefficients")
         .arrayProject([0])
         .arrayFlatten(
-            [harmonic_terms.slice(0, ee.Number(max_order).multiply(2).add(1))]
+            [
+                harmonic_component_names.slice(
+                    0, ee.Number(MAX_HARMONIC_ORDER).multiply(2).add(1)
+                )
+            ]
         )
     )
 
-    def add_fitted_values(image: ee.Image) -> ee.Image:
-        """
-        Add fitted values to the image using harmonic regression coefficients.
-        """
-        fitted = (
+    def compute_fitted_values(image: ee.Image) -> ee.Image:
+        """Compute and add the fitted values band to the image."""
+        fitted_values = (
             image.select(
-                harmonic_terms.slice(0, ee.Number(max_order).multiply(2).add(1))
+                regression_input_bands.slice(
+                    0, ee.Number(MAX_HARMONIC_ORDER).multiply(2).add(1)
+                )
             )
             .multiply(regression_coefficients)
             .reduce(ee.Reducer.sum())
             .rename("fitted")
         )
-        return image.addBands(fitted)
+        return image.addBands(fitted_values)
 
-    return harmonic_sentinel_collection.map(add_fitted_values)
+    return harmonic_image_collection.map(compute_fitted_values)
