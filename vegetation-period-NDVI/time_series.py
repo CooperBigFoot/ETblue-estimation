@@ -69,97 +69,32 @@ def extract_time_ranges(time_range: List[str], agg_interval: int) -> ee.List:
     return time_intervals
 
 
-def get_harmonic_ts(
-    year: int, aoi: ee.Geometry, time_intervals: ee.List
-) -> ee.ImageCollection:
-    """
-    Generate a harmonized time series with harmonic regression for a given year and area.
+import ee
+import math
+from typing import List, Dict, Any
+from utils.composites import harmonized_ts
+from data_loading import (
+    load_sentinel2_data,
+    ndvi_band_to_int,
+    ndvi_band_to_float,
+    add_time_data,
+)
 
-    Args:
-        year (int): The year for which to generate the time series.
-        aoi (ee.Geometry): The area of interest.
-        time_intervals (ee.List): List of time intervals for aggregation.
+# Initialize Earth Engine
+ee.Initialize(project="thurgau-irrigation")
 
-    Returns:
-        ee.ImageCollection: Harmonized time series with fitted values.
-    """
-    yearly_sentinel_data = load_sentinel2_data(year, aoi)
+OMEGA = 1  # Temporal frequency
+MAX_HARMONIC_ORDER = 2  # Maximum order of harmonics
 
-    cloud_filtered_data = yearly_sentinel_data.map(ndvi_band_to_int)
 
-    harmonized_data = harmonized_ts(
-        cloud_filtered_data,
-        ["NDVI_int"],
-        time_intervals,
-        {"agg_type": "geomedian"},
-    ).map(lambda img: ndvi_band_to_float(ee.Image(img)))
-
-    # Add 't' and 'constant' bands after harmonization
-    harmonized_data = harmonized_data.map(add_time_data)
-
-    def replace_by_empty(
-        harmonized_collection: ee.ImageCollection,
-        cloud_filtered_collection: ee.ImageCollection,
-        time_range: ee.List,
-    ) -> ee.Image:
-        """
-        Replace the harmonized image with an empty image if no cloud-filtered images are found in the time range.
-        """
-        time_range = ee.List(time_range)
-        start_date = ee.Date(time_range.get(0))
-        end_date = ee.Date(time_range.get(1))
-        nb_imgs = cloud_filtered_collection.filterDate(start_date, end_date).size()
-        img = harmonized_collection.filterDate(start_date, end_date).first()
-
-        def create_empty_image(str_name, prev):
-            return ee.Image(prev).addBands(
-                img.select(ee.String(str_name)).updateMask(ee.Image().mask())
-            )
-
-        empty_img = (
-            ee.Image(img.bandNames().iterate(create_empty_image, ee.Image()))
-            .select(img.bandNames())
-            .copyProperties(img, ["system:time_start"])
+def add_harmonic_components(image: ee.Image) -> ee.Image:
+    """Add harmonic component bands to the image."""
+    for i in range(1, MAX_HARMONIC_ORDER + 1):
+        time_radians = image.select("t").multiply(2 * i * OMEGA * math.pi)
+        image = image.addBands(time_radians.cos().rename(f"cos{i}")).addBands(
+            time_radians.sin().rename(f"sin{i}")
         )
-
-        return ee.Algorithms.If(nb_imgs.gt(0), img, empty_img)
-
-    harmonized_data = ee.ImageCollection(
-        ee.List(time_intervals).map(
-            lambda list_item: replace_by_empty(
-                harmonized_data, cloud_filtered_data, ee.List(list_item)
-            )
-        )
-    )
-
-    names = harmonized_data.first().bandNames()
-
-    def interpolate_image(image: ee.Image) -> ee.Image:
-        """
-        Interpolate the image by averaging over a 30-day window centered on the current date.
-        """
-        current_date = ee.Date(image.get("system:time_start"))
-        mean_filtered_image = harmonized_data.filterDate(
-            current_date.advance(-15, "day"), current_date.advance(15, "day")
-        ).mean()
-        return (
-            mean_filtered_image.where(image, image)
-            .rename(names)
-            .copyProperties(image, ["system:time_start"])
-        )
-
-    harmonized_data = ee.ImageCollection(harmonized_data.map(interpolate_image))
-    print(
-        f"Year {year}: Data size after interpolation: {harmonized_data.size().getInfo()}"
-    )
-
-    fitted_data = compute_harmonic_fit("NDVI", harmonized_data, 2)
-
-    return fitted_data
-
-
-OMEGA = 1  # Adjust this value as needed
-MAX_HARMONIC_ORDER = 2  # Adjust this value as needed
+    return image
 
 
 def compute_harmonic_fit(
@@ -169,43 +104,22 @@ def compute_harmonic_fit(
 ) -> ee.ImageCollection:
     """
     Compute fitted values using harmonic regression on a vegetation index time series.
-
-    Args:
-        vegetation_index (str): Name of the vegetation index band (e.g., "NDVI").
-        input_image_collection (ee.ImageCollection): Input image collection with vegetation index and time bands.
-        parallel_scale (int): Parallel scale for computation.
-
-    Returns:
-        ee.ImageCollection: Image collection with original bands and an additional 'fitted' band.
     """
-    harmonic_component_names = ee.List(
-        [
-            "constant",
-            "cos1",
-            "sin1",
-            "cos2",
-            "sin2",
-        ]
-    )
+    harmonic_component_names = ["constant", "t"] + [
+        f"{trig}{i}"
+        for i in range(1, MAX_HARMONIC_ORDER + 1)
+        for trig in ["cos", "sin"]
+    ]
 
-    def add_harmonic_components(image: ee.Image) -> ee.Image:
-        """Add harmonic component bands to the image."""
-        time_radians = image.select("t").multiply(2 * OMEGA * math.pi)
-        time_radians_2x = image.select("t").multiply(4 * OMEGA * math.pi)
-        return (
-            image.addBands(time_radians.cos().rename("cos1"))
-            .addBands(time_radians.sin().rename("sin1"))
-            .addBands(time_radians_2x.cos().rename("cos2"))
-            .addBands(time_radians_2x.sin().rename("sin2"))
-        )
+    harmonic_component_names = ee.List(harmonic_component_names)
 
     harmonic_image_collection = input_image_collection.select(
         ee.List([ee.String(vegetation_index), "t", "constant"])
     ).map(add_harmonic_components)
 
-    regression_input_bands = harmonic_component_names.slice(
-        0, ee.Number(MAX_HARMONIC_ORDER).multiply(2).add(1)
-    ).add(ee.String(vegetation_index))
+    regression_input_bands = ee.List(harmonic_component_names).add(
+        ee.String(vegetation_index)
+    )
 
     regression_result = harmonic_image_collection.select(regression_input_bands).reduce(
         reducer=ee.Reducer.linearRegression(harmonic_component_names.length(), 1),
@@ -215,27 +129,122 @@ def compute_harmonic_fit(
     regression_coefficients = (
         regression_result.select("coefficients")
         .arrayProject([0])
-        .arrayFlatten(
-            [
-                harmonic_component_names.slice(
-                    0, ee.Number(MAX_HARMONIC_ORDER).multiply(2).add(1)
-                )
-            ]
-        )
+        .arrayFlatten([harmonic_component_names])
     )
 
-    def compute_fitted_values(image: ee.Image) -> ee.Image:
-        """Compute and add the fitted values band to the image."""
+    def compute_fitted_values_and_rmse(image: ee.Image) -> ee.Image:
+        """Compute fitted values and RMSE, and add them as new bands to the image."""
         fitted_values = (
-            image.select(
-                regression_input_bands.slice(
-                    0, ee.Number(MAX_HARMONIC_ORDER).multiply(2).add(1)
-                )
-            )
+            image.select(harmonic_component_names)
             .multiply(regression_coefficients)
             .reduce(ee.Reducer.sum())
             .rename("fitted")
         )
-        return image.addBands(fitted_values)
 
-    return harmonic_image_collection.map(compute_fitted_values)
+        rmse = (
+            image.select(vegetation_index)
+            .subtract(fitted_values)
+            .pow(2)
+            .sqrt()
+            .rename("rmse")
+        )
+
+        return image.addBands(fitted_values).addBands(rmse)
+
+    return harmonic_image_collection.map(compute_fitted_values_and_rmse)
+
+
+def calculate_phase_amplitude(regression_coefficients: ee.Image) -> ee.Image:
+    """Calculate phase and amplitude from regression coefficients."""
+    phase = ee.Image.constant(0)
+    amplitude = ee.Image.constant(0)
+
+    for i in range(1, MAX_HARMONIC_ORDER + 1):
+        cos_band = f"cos{i}"
+        sin_band = f"sin{i}"
+
+        phase_i = (
+            regression_coefficients.select(sin_band)
+            .atan2(regression_coefficients.select(cos_band))
+            .rename(f"phase{i}")
+        )
+
+        amplitude_i = (
+            regression_coefficients.select(sin_band)
+            .hypot(regression_coefficients.select(cos_band))
+            .rename(f"amplitude{i}")
+        )
+
+        phase = phase.addBands(phase_i)
+        amplitude = amplitude.addBands(amplitude_i)
+
+    return phase.addBands(amplitude)
+
+
+def get_harmonic_ts(
+    year: int, aoi: ee.Geometry, time_intervals: ee.List
+) -> Dict[str, Any]:
+    """
+    Generate a harmonized time series with harmonic regression for a given year and area.
+
+    Args:
+        year (int): The year for which to generate the time series.
+        aoi (ee.Geometry): The area of interest.
+        time_intervals (ee.List): List of time intervals for aggregation.
+
+    Returns:
+        Dict[str, Any]: Dictionary containing fitted data, regression coefficients, and phase/amplitude.
+    """
+    # Load Sentinel-2 data for the specified year and area
+    yearly_sentinel_data = load_sentinel2_data(year, aoi)
+
+    # Convert NDVI to integer representation for cloud filtering
+    cloud_filtered_data = yearly_sentinel_data.map(ndvi_band_to_int)
+
+    # Create harmonized time series
+    harmonized_data = harmonized_ts(
+        cloud_filtered_data,
+        ["NDVI_int"],
+        time_intervals,
+        {"agg_type": "geomedian"},
+    ).map(lambda img: ndvi_band_to_float(ee.Image(img)))
+
+    # Add time and constant bands
+    harmonized_data = harmonized_data.map(add_time_data)
+
+    # Interpolate missing data
+    def interpolate_image(image: ee.Image) -> ee.Image:
+        """
+        Interpolate the image by averaging over a 30-day window centered on the current date.
+        """
+        current_date = ee.Date(image.get("system:time_start"))
+        mean_filtered_image = harmonized_data.filterDate(
+            current_date.advance(-15, "day"), current_date.advance(15, "day")
+        ).mean()
+        return mean_filtered_image.where(image, image).copyProperties(
+            image, ["system:time_start"]
+        )
+
+    harmonized_data = ee.ImageCollection(harmonized_data.map(interpolate_image))
+
+    # Compute harmonic fit
+    fitted_data = compute_harmonic_fit("NDVI", harmonized_data, 2)
+
+    # Extract regression coefficients from the first image
+    regression_coefficients = fitted_data.first().select(
+        ["constant", "t"]
+        + [
+            f"{trig}{i}"
+            for i in range(1, MAX_HARMONIC_ORDER + 1)
+            for trig in ["cos", "sin"]
+        ]
+    )
+
+    # Calculate phase and amplitude
+    phase_amplitude = calculate_phase_amplitude(regression_coefficients)
+
+    return {
+        "fitted_data": fitted_data,
+        "regression_coefficients": regression_coefficients,
+        "phase_amplitude": phase_amplitude,
+    }

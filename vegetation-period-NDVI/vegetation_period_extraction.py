@@ -21,7 +21,9 @@ def create_binary_ndvi_indicator(img: ee.Image, threshold: float) -> ee.Image:
         ee.Image: Binary mask where 1 indicates NDVI above threshold.
     """
     return (
-        img.select("NDVI") # You can use fitted or ndvi band here
+        img.select(
+            "fitted"
+        )  # You can use fitted or ndvi band here. I should problably not hardcode this. No one is perfect hey?
         .gt(threshold)
         .rename("vegetation")
         .set("system:time_start", img.get("system:time_start"))
@@ -273,7 +275,10 @@ def get_crop_veg_period(
     Returns:
         ee.Image: Multi-band image containing vegetation period information.
     """
-    ndvi_collection = get_harmonic_ts(year, aoi, time_intervals)
+    harmonic_ts_dictionary = get_harmonic_ts(year, aoi, time_intervals)
+    ndvi_collection = harmonic_ts_dictionary.get(
+        "fitted_data"
+    )  # Contains NDVI and fitted bands
 
     veg_mask = create_binary_mask(ndvi_collection, NDVI_THRESHOLD)
     veg_mask_low = create_binary_mask(ndvi_collection, NDVI_LOW_THRESHOLD)
