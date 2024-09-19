@@ -84,12 +84,8 @@ def get_harmonic_ts(
         ee.ImageCollection: Harmonized time series with fitted values.
     """
     yearly_sentinel_data = load_sentinel2_data(year, aoi)
-    # print(f"Year {year}: Initial data size: {yearly_sentinel_data.size().getInfo()}")
 
     cloud_filtered_data = yearly_sentinel_data.map(ndvi_band_to_int)
-    # print(
-    #     f"Year {year}: Cloud-filtered data size: {cloud_filtered_data.size().getInfo()}"
-    # )
 
     harmonized_data = harmonized_ts(
         cloud_filtered_data,
@@ -97,7 +93,6 @@ def get_harmonic_ts(
         time_intervals,
         {"agg_type": "geomedian"},
     ).map(lambda img: ndvi_band_to_float(ee.Image(img)))
-    # print(f"Year {year}: Harmonized data size: {harmonized_data.size().getInfo()}")
 
     # Add 't' and 'constant' bands after harmonization
     harmonized_data = harmonized_data.map(add_time_data)
@@ -136,9 +131,6 @@ def get_harmonic_ts(
             )
         )
     )
-    # print(
-    #     f"Year {year}: Data size after replace_by_empty: {harmonized_data.size().getInfo()}"
-    # )
 
     names = harmonized_data.first().bandNames()
 
@@ -162,15 +154,11 @@ def get_harmonic_ts(
     )
 
     fitted_data = compute_harmonic_fit("NDVI", harmonized_data, 2)
-    # print(f"Year {year}: Fitted data size: {fitted_data.size().getInfo()}")
-    # print(
-    #     f"Year {year}: Fitted data band names: {fitted_data.first().bandNames().getInfo()}"
-    # )
 
     return fitted_data
 
 
-TEMPORAL_FREQUENCY = 1  # Adjust this value as needed
+OMEGA = 1  # Adjust this value as needed
 MAX_HARMONIC_ORDER = 2  # Adjust this value as needed
 
 
@@ -202,8 +190,8 @@ def compute_harmonic_fit(
 
     def add_harmonic_components(image: ee.Image) -> ee.Image:
         """Add harmonic component bands to the image."""
-        time_radians = image.select("t").multiply(2 * TEMPORAL_FREQUENCY * math.pi)
-        time_radians_2x = image.select("t").multiply(4 * TEMPORAL_FREQUENCY * math.pi)
+        time_radians = image.select("t").multiply(2 * OMEGA * math.pi)
+        time_radians_2x = image.select("t").multiply(4 * OMEGA * math.pi)
         return (
             image.addBands(time_radians.cos().rename("cos1"))
             .addBands(time_radians.sin().rename("sin1"))
