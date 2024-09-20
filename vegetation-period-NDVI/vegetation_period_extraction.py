@@ -245,11 +245,11 @@ def combine_results(
         ee.Image: Multi-band image with all vegetation period information.
     """
     result = (
-        first_start.rename("first")
-        .addBands(first_end.rename("last"))
+        first_start.rename("first_veg_period_start")
+        .addBands(first_end.rename("first_veg_period_end"))
         .addBands(
-            second_start.rename("first2")
-            .addBands(second_end.rename("last2"))
+            second_start.rename("second_veg_period_start")
+            .addBands(second_end.rename("second_veg_period_end"))
             .updateMask(double_cropping.eq(1))
         )
     )
@@ -258,7 +258,7 @@ def combine_results(
     result = result.divide(2).floor().add(ee.Image.constant(start_month))
 
     result = result.where(result.gt(12), result.subtract(12))
-    return result.addBands(double_cropping.rename("double"))
+    return result.addBands(double_cropping.rename("is_double_cropping"))
 
 
 def get_crop_veg_period(

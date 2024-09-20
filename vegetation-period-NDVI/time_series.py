@@ -83,7 +83,7 @@ from data_loading import (
 # Initialize Earth Engine
 ee.Initialize(project="thurgau-irrigation")
 
-OMEGA = 1  # Temporal frequency
+OMEGA = 1.5  # Temporal frequency. Value from: https://doi.org/10.1016/j.rse.2018.12.026
 MAX_HARMONIC_ORDER = 2  # Maximum order of harmonics
 
 
@@ -104,8 +104,21 @@ def compute_harmonic_fit(
 ) -> ee.ImageCollection:
     """
     Compute fitted values using harmonic regression on a vegetation index time series.
+    The equation for the harmonic regression is:
+
+        y(t) = b0 + sum(b2i*cos(2*pi*i*omega*t) + b2i+1*sin(2*pi*i*omega*t)) for i = 1 to n
+
+    as in the paper: https://doi.org/10.1016/j.rse.2018.12.026
+
+    Args:
+        vegetation_index (str): Name of the vegetation index.
+        input_image_collection (ee.ImageCollection): Input image collection.
+        parallel_scale (int): Parallelization scale for the linear regression.
+
+    Returns:
+        ee.ImageCollection: Image collection with fitted values and RMSE.
     """
-    harmonic_component_names = ["constant", "t"] + [
+    harmonic_component_names = ["constant"] + [
         f"{trig}{i}"
         for i in range(1, MAX_HARMONIC_ORDER + 1)
         for trig in ["cos", "sin"]
@@ -132,8 +145,14 @@ def compute_harmonic_fit(
         .arrayFlatten([harmonic_component_names])
     )
 
-    def compute_fitted_values_and_rmse(image: ee.Image) -> ee.Image:
-        """Compute fitted values and RMSE, and add them as new bands to the image."""
+    def compute_fitted_values_and_performance(image: ee.Image) -> ee.Image:
+        """Compute fitted values and pwrformance metrics, and add them as new bands to the image.
+
+        Args:
+            image (ee.Image): Input image.
+
+        Returns:
+            ee.Image: Image with fitted values, RMSE and PBIAS."""
         fitted_values = (
             image.select(harmonic_component_names)
             .multiply(regression_coefficients)
@@ -151,7 +170,7 @@ def compute_harmonic_fit(
 
         return image.addBands(fitted_values).addBands(rmse)
 
-    return harmonic_image_collection.map(compute_fitted_values_and_rmse)
+    return harmonic_image_collection.map(compute_fitted_values_and_performance)
 
 
 def calculate_phase_amplitude(regression_coefficients: ee.Image) -> ee.Image:
@@ -232,7 +251,7 @@ def get_harmonic_ts(
 
     # Extract regression coefficients from the first image
     regression_coefficients = fitted_data.first().select(
-        ["constant", "t"]
+        ["constant"]
         + [
             f"{trig}{i}"
             for i in range(1, MAX_HARMONIC_ORDER + 1)
