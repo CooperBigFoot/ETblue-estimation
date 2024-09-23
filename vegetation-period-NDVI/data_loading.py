@@ -22,7 +22,6 @@ def load_sentinel2_data(year: int, aoi: ee.Geometry) -> ee.ImageCollection:
     start_date = ee.Date.fromYMD(year, 1, 1)
     end_date = ee.Date.fromYMD(year, 12, 31)
 
-
     s2_filtered = load_image_collection(
         "COPERNICUS/S2_HARMONIZED", {"start": start_date, "end": end_date}, aoi
     ).filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 50))
@@ -45,7 +44,9 @@ def add_variables(image: ee.Image) -> ee.Image:
     Returns:
         ee.Image: Image with added bands and cloud mask applied.
     """
-    ndvi = image.normalizedDifference(["B8", "B4"]).rename("NDVI")
+    ndvi = (
+        image.normalizedDifference(["B8", "B4"]).rename("NDVI").clamp(-1, 1).toFloat()
+    )
     lswi = image.normalizedDifference(["B8", "B11"]).rename(
         "LSWI"
     )  # Land Surface Water Index
@@ -81,7 +82,7 @@ def ndvi_band_to_int(image: ee.Image) -> ee.Image:
         ee.Image: Image with NDVI band converted to integer representation.
     """
 
-    ndvi_int = image.select("NDVI").multiply(10000).toInt16().rename("NDVI_int")
+    ndvi_int = image.select("NDVI").multiply(10000).toInt().rename("NDVI_int")
     return image.addBands(ndvi_int)
 
 
@@ -95,6 +96,7 @@ def ndvi_band_to_float(image: ee.Image) -> ee.Image:
     Returns:
         ee.Image: Image with NDVI band converted to float representation.
     """
+
     ndvi_float = image.select("NDVI_int").toFloat().divide(10000).rename("NDVI")
     return image.addBands(ndvi_float, overwrite=True)
 

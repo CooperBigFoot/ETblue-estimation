@@ -217,16 +217,17 @@ def get_harmonic_ts(
     # Load Sentinel-2 data for the specified year and area
     yearly_sentinel_data = load_sentinel2_data(year, aoi)
 
-    # Convert NDVI to integer representation for cloud filtering
-    cloud_filtered_data = yearly_sentinel_data.map(ndvi_band_to_int)
+    # # Convert NDVI to integer representation for cloud filtering
+    # cloud_filtered_data = yearly_sentinel_data.map(ndvi_band_to_int)
 
     # Create harmonized time series
     harmonized_data = harmonized_ts(
-        cloud_filtered_data,
-        ["NDVI_int"],
+        yearly_sentinel_data,
+        ["NDVI"], # NDVI_int
         time_intervals,
         {"agg_type": "geomedian"},
-    ).map(lambda img: ndvi_band_to_float(ee.Image(img)))
+    )
+    # .map(lambda img: ndvi_band_to_float(ee.Image(img)))
 
     # Add time and constant bands
     harmonized_data = harmonized_data.map(add_time_data)
