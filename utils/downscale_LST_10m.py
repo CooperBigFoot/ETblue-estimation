@@ -9,6 +9,8 @@ import ee
 from typing import Dict, Any, List, Tuple, Union
 from dataclasses import dataclass
 from vegetation_period_NDVI.time_series import extract_time_ranges, get_harmonic_ts
+from vegetation_period_NDVI.data_loading import load_sentinel2_data
+
 
 def cloud_score_sentinel(image: ee.Image) -> ee.Image:
     """Applies cloud scoring to a Sentinel-2 image.
@@ -257,19 +259,30 @@ def calculate_sentinel_spectral_indices(image: ee.Image) -> ee.Image:
         ee.Image: The image with added spectral index bands.
     """
     ndwi = image.normalizedDifference(["B4", "B11"]).rename("NDWI")
-    ndvi = image.normalizedDifference(["B8", "B4"]).rename("NDVI")
     ndbi = image.normalizedDifference(["B8", "B12"]).rename("NDBI")
 
-    return image.addBands([ndvi, ndwi, ndbi])
+    return image.addBands([ndwi, ndbi])
 
-def get_s2_collection(year:int, aoi:ee.Geometry) -> ee.ImageCollection:
-    start_date = f"{year}-03-01"
-    end_date = f"{year}-10-31"
 
-    time_intervals = extract_time_ranges([start_date, end_date], 1)
-    filtered_sentinel_data = get_harmonic_ts(
-    year=year, aoi=aoi_buffered, time_intervals=time_intervals
-)
+def get_s2_collection(year: int, aoi: ee.Geometry) -> ee.ImageCollection:
+    """
+    Load Sentinel-2 data for a given year and area of interest, applying cloud and shadow masks.
+
+    Args:
+        aoi (ee.Geometry): The area of interest.
+
+    Returns:
+        ee.ImageCollection: The processed Sentinel-2 image collection.
+    """
+    start_date = f"{year}-01-01"
+    end_date = f"{year}-12-31"
+
+    filtered_sentinel_data = load_sentinel2_data(year, aoi)
+    filtered_sentinel_data = filtered_sentinel_data.map(
+        calculate_sentinel_spectral_indices
+    )
+
+    return filtered_sentinel_data
 
 
 def calculate_lai(image: ee.Image) -> ee.Image:
@@ -381,13 +394,22 @@ def calculate_downscaled_lst(
     # Extract intercept and slope coefficients
     intercept = coefficients.get("constant", ee.Image(0))
 
-    # Define the expected band names
-    expected_bands = ee.List(
-        ["SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7", "NDVI", "NDWI"]
-    )
+    # Define the expected band names from
+    rename_dict = {
+        "B2": "SR_B2",
+        "B3": "SR_B3",
+        "B4": "SR_B4",
+        "B8": "SR_B5",
+        "B11": "SR_B6",
+        "B12": "SR_B7",
+    }
+
+    expected_bands = ee.List(list(rename_dict.keys()) + ["NDVI", "NDWI", "NDBI"])
 
     # Rename bands in s2_indices to match the expected names
-    renamed_s2_indices = s2_indices.rename(expected_bands)
+    renamed_s2_indices = s2_indices.select(
+        list(rename_dict.values()), list(rename_dict.keys())
+    )
 
     # Create a list of images, each representing a term in the regression equation
     regression_terms = expected_bands.map(
@@ -498,7 +520,7 @@ def generate_downscaled_lst(
     s2_prepared = prepare_image(s2_image, geometry)
 
     # Calculate spectral indices
-    l8_indices = calculate_spectral_indices(l8_prepared)
+    l8_indices = calculate_landsat_spectral_indices(l8_prepared)
 
     # Prepare regression bands
     regression_image = prepare_regression_bands(
