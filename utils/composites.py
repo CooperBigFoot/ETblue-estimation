@@ -1,20 +1,7 @@
+# File: /src/gee_processing/time_series_utils.py
+
 import ee
 from typing import List, Dict, Any, Optional
-
-# Initialize Earth Engine
-ee.Initialize(project="thurgau-irrigation")
-
-# Constants
-DEFAULT_BAND_NAME = "NDVI"
-DEFAULT_AGG_TYPE = "median"
-
-REDUCERS = {
-    "geomedian": ee.Reducer.geometricMedian,
-    "mean": ee.Reducer.mean,
-    "max": ee.Reducer.max,
-    "min": ee.Reducer.min,
-    "median": ee.Reducer.median,
-}
 
 
 def harmonized_ts(
@@ -26,38 +13,32 @@ def harmonized_ts(
     """
     Generates a harmonized time series from a Sentinel-2 Image Collection.
 
-    Harmonized means that the generated temporal aggregates are equally spaced in time,
-    based on the number of days specified by the time intervals.
-
     Args:
         masked_collection (ee.ImageCollection): The Sentinel-2 image collection with applied masks.
         band_list (List[str]): List of band names to include in the aggregation.
         time_intervals (List[List[ee.Date]]): List of time intervals, each defined by a start and end ee.Date.
         options (Optional[Dict[str, Any]]): Optional parameters.
-            - band_name (str): Name of the band for metadata. Defaults to 'NDVI'.
-            - agg_type (str): Type of aggregation ('median', 'mean', 'geomedian', 'max', 'min'). Defaults to 'median'.
 
     Returns:
         ee.ImageCollection: A collection of aggregated images sorted by time.
     """
-    if not isinstance(masked_collection, ee.ImageCollection):
-        raise TypeError("masked_collection must be an ee.ImageCollection")
+    options = options or {}
+    band_name = options.get("band_name", "NDVI")
+    agg_type = options.get("agg_type", "median")
 
-    options = ee.Dictionary(options or {})
-    band_name = options.get("band_name", DEFAULT_BAND_NAME)
-    agg_type = options.get("agg_type", DEFAULT_AGG_TYPE)
+    time_intervals = ee.List(time_intervals)
 
-    def _stack_bands(time_interval: ee.List, stack: ee.List) -> ee.List:
+    def _stack_bands(time_interval, stack):
         outputs = aggregate_stack(
             masked_collection,
             band_list,
             time_interval,
-            ee.Dictionary({"agg_type": agg_type, "band_name": band_name}),
+            {"agg_type": agg_type, "band_name": band_name},
         )
         return ee.List(stack).add(ee.Image(outputs))
 
-    initial_stack = ee.List([])
-    agg_stack = ee.List(time_intervals).iterate(_stack_bands, initial_stack)
+    stack = ee.List([])
+    agg_stack = ee.List(time_intervals).iterate(_stack_bands, stack)
 
     return ee.ImageCollection(ee.List(agg_stack)).sort("system:time_start")
 
@@ -66,7 +47,7 @@ def aggregate_stack(
     masked_collection: ee.ImageCollection,
     band_list: List[str],
     time_interval: ee.List,
-    options: Optional[Dict[str, Any]] = None,
+    options: Dict[str, Any],
 ) -> ee.Image:
     """
     Generates a temporally-aggregated image for a given time interval.
@@ -75,15 +56,13 @@ def aggregate_stack(
         masked_collection (ee.ImageCollection): The Sentinel-2 image collection with applied masks.
         band_list (List[str]): List of band names to include in the aggregation.
         time_interval (ee.List): A list containing start and end ee.Date objects for the interval.
-        options (ee.Dictionary): Optional parameters.
-            - band_name (str): Name of the band for metadata. Defaults to 'NDVI'.
-            - agg_type (str): Type of aggregation ('median', 'mean', 'geomedian', 'max', 'min'). Defaults to 'median'.
+        options (Dict[str, Any]): Optional parameters.
 
     Returns:
         ee.Image: An aggregated image for the specified time interval.
     """
-    band_name = options.get("band_name", DEFAULT_BAND_NAME)
-    agg_type = options.get("agg_type", DEFAULT_AGG_TYPE)
+    band_name = options.get("band_name", "NDVI")
+    agg_type = options.get("agg_type", "median")
 
     time_interval = ee.List(time_interval)
 
@@ -93,25 +72,34 @@ def aggregate_stack(
 
     timestamp = {
         "system:time_start": start_date.advance(
-            agg_interval_days.divide(2).ceil(), "day"
+            ee.Number(agg_interval_days.divide(2)).ceil(), "day"
         ).millis()
     }
-
-    def create_empty_image() -> ee.Image:
-        return ee.Image.constant(0).rename(band_list).float().set(timestamp)
 
     filtered_collection = masked_collection.filterDate(start_date, end_date).select(
         band_list
     )
 
-    reducer = REDUCERS.get(agg_type, ee.Reducer.median)
+    def create_empty_image():
+        empty_image = ee.Image.constant(0).rename(band_list[0])
+        for band in band_list[1:]:
+            empty_image = empty_image.addBands(ee.Image.constant(0).rename(band))
+        return empty_image.set(timestamp).float()
+
+    def apply_reducer(reducer):
+        return filtered_collection.reduce(reducer).rename(band_list).set(timestamp)
+
     if agg_type == "geomedian":
-        reducer = reducer(len(band_list))
+        reducer = ee.Reducer.geometricMedian(len(band_list))
+    elif agg_type == "mean":
+        reducer = ee.Reducer.mean()
+    elif agg_type == "max":
+        reducer = ee.Reducer.max()
+    elif agg_type == "min":
+        reducer = ee.Reducer.min()
+    else:  # default to median
+        reducer = ee.Reducer.median()
 
-    agg_image = ee.Algorithms.If(
-        filtered_collection.size().gt(0),
-        filtered_collection.reduce(reducer()).rename(band_list).set(timestamp),
-        create_empty_image(),
+    return ee.Algorithms.If(
+        filtered_collection.size().gt(0), apply_reducer(reducer), create_empty_image()
     )
-
-    return ee.Image(agg_image)

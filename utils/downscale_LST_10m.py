@@ -1,9 +1,4 @@
-"""
-The logic in this script is described in the paper "Combining Landsat 8 and Sentinel-2 Data in Google Earth Engine to Derive Higher Resolution Land Surface Temperature Maps in Urban Environment" by Katarína Onačillová et al. (2022). DOI: https://doi.org/10.3390/rs14164076
 
-This script was translated to Python by Nicolas Lazaro. 
-The original js script written by Silvan Ragettli is at: users/hydrosolutions/CropMapper_India:Scripts4Downscaling/downscale_anything_10m
-"""
 
 import ee
 from typing import Dict, Any, List, Tuple, Union

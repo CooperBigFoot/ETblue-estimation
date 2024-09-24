@@ -223,7 +223,7 @@ def get_harmonic_ts(
     # Create harmonized time series
     harmonized_data = harmonized_ts(
         yearly_sentinel_data,
-        ["NDVI"], # NDVI_int
+        ["NDVI"],  # NDVI_int
         time_intervals,
         {"agg_type": "geomedian"},
     )
