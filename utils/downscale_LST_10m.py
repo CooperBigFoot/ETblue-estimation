@@ -7,6 +7,22 @@ The original js script written by Silvan Ragettli is at: users/hydrosolutions/Cr
 
 import ee
 from typing import Dict, Any, List, Tuple, Union
+from dataclasses import dataclass
+
+# Some options might be redundant. But the naming is so inconsistent that I'm not sure which ones are redundant.
+# The options are described here: https://developers.google.com/earth-engine/tutorials/community/sentinel-2-s2cloudless
+@dataclass
+class Sentinel2Options:
+    CLOUD_FILTER: int = 60
+    CLD_PRB_THRESH: int = 50
+    NIR_DRK_THRESH: float = 0.15
+    CLD_PRJ_DIST: int = 1
+    BUFFER: int = 50
+    CC_THRESH: int = 40
+    NODATA_THRESH: int = 40
+    CC_PIX: int = 50
+    MIN_MONTH: int = 1
+    MAX_MONTH: int = 12
 
 
 def cloud_score_sentinel(image: ee.Image) -> ee.Image:
@@ -87,7 +103,7 @@ def cloud_score_sentinel(image: ee.Image) -> ee.Image:
     return (
         image.updateMask(mask.Not())
         .addBands(mask2)
-        .addBands({"srcImg": image.select("probability"), "overwrite": True})
+        .addBands(image.select("probability"), overwrite=True)
         .set(
             {
                 "nodata_cover": cloud_pixels,
@@ -145,103 +161,228 @@ def process_image(
     )
 
 
-def get_s2_images(
-    aoi: ee.Geometry, start_date: ee.Date, end_date: ee.Date, options: Dict[str, Any]
+def get_s2_sr_cld_col(
+    aoi: ee.Geometry, start_date: ee.Date, end_date: ee.Date, options: Sentinel2Options
 ) -> ee.ImageCollection:
-    """Gets Sentinel-2 images for a specific area and time range with custom options.
+    """
+    Filter the surface reflectance (SR) and s2cloudless collections according to area of interest and date parameters, then join them on the system:index property. The result is a copy of the SR collection where each image has a new 's2cloudless' property whose value is the corresponding s2cloudless image.
 
     Args:
         aoi (ee.Geometry): Area of interest.
         start_date (ee.Date): Start date for filtering images.
         end_date (ee.Date): End date for filtering images.
-        options (Dict[str, Any]): Dictionary of options including:
-            - cc_thresh (int): Cloud cover threshold.
-            - nodata_thresh (int): No-data cover threshold.
-            - cc_pix (int): Cloudy pixel percentage threshold.
-            - min_m (int): Minimum month for filtering.
-            - max_m (int): Maximum month for filtering.
+
+    Returns:
+        ee.ImageCollection: Filtered and joined Sentinel-2 SR and s2cloudless image collections.
+    """
+    # Import and filter S2 SR.
+    s2_sr_col = (
+        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+        .filterBounds(aoi)
+        .filterDate(start_date, end_date)
+        .filter(ee.Filter.lte("CLOUDY_PIXEL_PERCENTAGE", options.CLOUD_FILTER))
+    )
+
+    # Import and filter s2cloudless.
+    s2_cloudless_col = (
+        ee.ImageCollection("COPERNICUS/S2_CLOUD_PROBABILITY")
+        .filterBounds(aoi)
+        .filterDate(start_date, end_date)
+    )
+
+    # Join the filtered s2cloudless collection to the SR collection by the 'system:index' property.
+    return ee.ImageCollection(
+        ee.Join.saveFirst("s2cloudless").apply(
+            **{
+                "primary": s2_sr_col,
+                "secondary": s2_cloudless_col,
+                "condition": ee.Filter.equals(
+                    **{"leftField": "system:index", "rightField": "system:index"}
+                ),
+            }
+        )
+    )
+
+
+def add_cloud_bands(image: ee.Image, options: Sentinel2Options) -> ee.Image:
+    """Add s2cloudless probability band to the input image.
+
+    Args:
+        image (ee.Image): Sentinel-2 image to add cloud bands to.
+        options (Sentinel2Options): Sentinel-2 processing options.
+
+    Returns:
+        ee.Image: Image with added cloud bands.
+    """
+    # Get s2cloudless image, subset the probability band.
+    cld_prb = ee.Image(image.get("s2cloudless")).select("probability")
+
+    # Condition s2cloudless by the probability threshold value.
+    is_cloud = cld_prb.gt(options.CLD_PRB_THRESH).rename("clouds")
+
+    # Add the cloud probability layer and cloud mask as image bands.
+    return image.addBands(ee.Image([cld_prb, is_cloud]))
+
+
+def add_shadow_bands(image: ee.Image, options: Sentinel2Options) -> ee.Image:
+    """Add dark NIR, cloud projection, and identified shadows as image bands.
+
+    Args:
+        image (ee.Image): Sentinel-2 image to add shadow bands to.
+        options (Sentinel2Options): Sentinel-2 processing options.
+
+    Returns:
+        ee.Image: Image with added shadow bands.
+    """
+    # Identify water pixels from the SCL band.
+    not_water = image.select("SCL").neq(6)
+
+    # Identify dark NIR pixels that are not water (potential cloud shadow pixels).
+    dark_pixels = (
+        image.select("B8")
+        .lt(options.NIR_DRK_THRESH)
+        .multiply(not_water)
+        .rename("dark_pixels")
+    )
+
+    # Determine the direction to project cloud shadow from clouds (assumes UTM projection).
+    shadow_azimuth = ee.Number(90).subtract(
+        ee.Number(image.get("MEAN_SOLAR_AZIMUTH_ANGLE"))
+    )
+
+    # Project shadows from clouds for the distance specified by the CLD_PRJ_DIST input.
+    cld_proj = (
+        image.select("clouds")
+        .directionalDistanceTransform(shadow_azimuth, options.CLD_PRJ_DIST * 10)
+        .reproject(**{"crs": image.select(0).projection(), "scale": 100})
+        .select("distance")
+        .mask()
+        .rename("cloud_transform")
+    )
+
+    # Identify the intersection of dark pixels with cloud shadow projection.
+    shadows = cld_proj.multiply(dark_pixels).rename("shadows")
+
+    # Add dark NIR, cloud projection, and identified shadows to input image.
+    return image.addBands(ee.Image([dark_pixels, cld_proj, shadows]))
+
+
+def add_cloud_shadow_mask(image: ee.Image, options: Sentinel2Options) -> ee.Image:
+    """Add cloud and shadow masks to the input image.
+
+    Args:
+        image (ee.Image): Sentinel-2 image to add cloud and shadow masks to.
+        options (Sentinel2Options): Sentinel-2 processing options.
+
+    Returns:
+        ee.Image: Image with added cloud and shadow masks.
+    """
+    # Add cloud component bands.
+    img_cloud = add_cloud_bands(image, options)
+
+    # Add cloud shadow component bands.
+    img_cloud_shadow = add_shadow_bands(img_cloud, options)
+
+    # Combine cloud and shadow mask, set cloud and shadow as value 1, else 0.
+    is_cld_shdw = (
+        img_cloud_shadow.select("clouds").add(img_cloud_shadow.select("shadows")).gt(0)
+    )
+
+    # Remove small cloud-shadow patches and dilate remaining pixels by BUFFER input.
+    # 20 m scale is for speed, and assumes clouds don't require 10 m precision.
+    is_cld_shdw = (
+        is_cld_shdw.focalMin(2)
+        .focalMax(options.BUFFER * 2 / 20)
+        .reproject(**{"crs": image.select([0]).projection(), "scale": 20})
+        .rename("cloudmask")
+    )
+
+    # Add the final cloud-shadow mask to the image.
+    return img_cloud_shadow.addBands(is_cld_shdw)
+
+
+def add_s2_spectral_indices(image: ee.Image) -> ee.Image:
+    """
+    Add NDBI, NDWI, and NDVI bands to the image.
+
+    Args:
+        image (ee.Image): Sentinel-2 image to add spectral indices to.
+
+    Returns:
+        ee.Image: Image with added spectral indices.
+    """
+    ndbi = image.normalizedDifference(["B11", "B8"]).rename("NDBI")
+    ndwi = image.normalizedDifference(["B3", "B8"]).rename("NDWI")
+    ndvi = image.normalizedDifference(["B8", "B4"]).rename("NDVI")
+    return image.addBands([ndbi, ndwi, ndvi])
+
+
+def apply_cloud_shadow_mask(image: ee.Image) -> ee.Image:
+    """
+    Apply the cloud and shadow mask to the image.
+
+    Args:
+        image (ee.Image): Sentinel-2 image to apply the cloud and shadow mask to.
+
+    Returns:
+        ee.Image: Image with the cloud and shadow mask applied.
+    """
+    cloudmask = image.select("cloudmask").Not()
+    return image.updateMask(cloudmask)
+
+
+def get_s2_images(
+    aoi: ee.Geometry,
+    start_date: ee.Date,
+    end_date: ee.Date,
+    options: Dict[str, Any] = None,
+) -> ee.ImageCollection:
+    """
+    Gets Sentinel-2 images for a specific area and time range with custom options.
+
+    Args:
+        aoi (ee.Geometry): Area of interest.
+        start_date (ee.Date): Start date for filtering images.
+        end_date (ee.Date): End date for filtering images.
+        options (Dict[str, Any], optional): Dictionary of options to override defaults.
 
     Returns:
         ee.ImageCollection: Filtered and processed Sentinel-2 image collection.
     """
-    # Extract options with default values
-    cc_thresh = options.get("cc_thresh", 40)
-    nodata_thresh = options.get("nodata_thresh", 40)
-    cc_pix = options.get("cc_pix", 50)
-    min_month = options.get("min_m", 1)
-    max_month = options.get("max_m", 12)
+    # Set options
+    s2_options = Sentinel2Options()
+    if options:
+        for key, value in options.items():
+            if hasattr(s2_options, key.upper()):
+                setattr(s2_options, key.upper(), value)
 
-    def add_bands(image: ee.Image) -> ee.Image:
-        """Adds MNDWI, NDWI, and NDVI bands to the image.
+    # Get the joined S2 SR and cloud probability collections
+    s2_sr_cld_col = get_s2_sr_cld_col(aoi, start_date, end_date, s2_options)
 
-        Args:
-            image (ee.Image): The Sentinel-2 image.
+    def process_image(image: ee.Image) -> ee.Image:
+        """Process a single Sentinel-2 image."""
+        # Add cloud and shadow bands
+        cloud_shadow_image = add_cloud_shadow_mask(image, s2_options)
 
-        Returns:
-            ee.Image: Image with additional bands and SENSING_TIME property.
-        """
-        mndwi = image.normalizedDifference(["B3", "B11"]).rename("MNDWI")
-        ndwi = image.normalizedDifference(["B4", "B11"]).rename("NDWI")
-        ndvi = image.normalizedDifference(["B8", "B4"]).rename("NDVI")
-        bands = image.select(["B2", "B3", "B4", "B8", "B11", "B12", "QA60"])
-        sensing_time = ee.Date(image.get("system:time_start")).format("YYYY-MM-dd")
-        return bands.addBands([mndwi, ndvi, ndwi]).set("SENSING_TIME", sensing_time)
+        # Add spectral indices
+        spectral_indices = add_s2_spectral_indices(cloud_shadow_image)
 
-    # Load and process Sentinel-2 imagery
-    sentinel2 = (
-        ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
-        .filterBounds(aoi)
-        .filterDate(start_date, end_date)
-        .filter(ee.Filter.calendarRange(min_month, max_month, "month"))
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cc_pix))
-        .map(add_bands)
-    )
+        # Apply cloud and shadow mask
+        masked_image = apply_cloud_shadow_mask(spectral_indices)
 
-    def set_sensing_time(image: ee.Image) -> ee.Image:
-        """Sets the SENSING_TIME property based on system:time_start.
+        return masked_image
 
-        Args:
-            image (ee.Image): The image to process.
+    # Process the collection
+    processed_collection = s2_sr_cld_col.map(process_image)
 
-        Returns:
-            ee.Image: Image with SENSING_TIME property set.
-        """
-        sensing_time = ee.Date(image.get("system:time_start")).format("YYYY-MM-dd")
-        return image.set("SENSING_TIME", sensing_time)
-
-    # Load and process Sentinel-2 cloud probability data
-    cloud_prob = (
-        ee.ImageCollection("COPERNICUS/S2_CLOUD_PROBABILITY")
-        .filterBounds(aoi)
-        .filterDate(start_date, end_date)
-        .map(set_sensing_time)
-    )
-
-    # Get unique sensing times
-    sensing_times = sentinel2.aggregate_array("SENSING_TIME").distinct()
-
-    # Process each image by sensing time
-    processed_images = ee.ImageCollection(
-        sensing_times.map(lambda time: process_image(time, sentinel2, cloud_prob, aoi))
-    )
-
-    # TODO: reflect if clipping is necessary
-    def apply_cloud_scoring(image: ee.Image) -> ee.Image:
-        """Applies cloud scoring and clips the image to the AOI.
-
-        Args:
-            image (ee.Image): The image to process.
-
-        Returns:
-            ee.Image: The cloud-scored image.
-        """
-        return cloud_score_sentinel(image.clip(aoi))
-
-    # Apply cloud scoring and filter images
+    # Filter the processed collection
     final_collection = (
-        processed_images.map(apply_cloud_scoring)
-        .filter(ee.Filter.lt("cloud_cover", cc_thresh))
-        .filter(ee.Filter.lt("nodata_cover", nodata_thresh))
+        processed_collection.filter(
+            ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", s2_options.CC_PIX)
+        )
+        .filter(
+            ee.Filter.calendarRange(s2_options.MIN_MONTH, s2_options.MAX_MONTH, "month")
+        )
         .sort("system:time_start")
     )
 
@@ -330,17 +471,17 @@ def prepare_image(image: ee.Image, geometry: ee.Geometry) -> ee.Image:
 
 
 def calculate_spectral_indices(image: ee.Image) -> ee.Image:
-    """Calculates spectral indices (NDVI, NDWI, NDBI) for the input image.
+    """Calculates spectral indices (NDVI, NDWI, NDBI) for the input Landsat 8 image.
 
     Args:
-        image (ee.Image): The input image containing the necessary bands.
+        image (ee.Image): The input Landsat 8 image containing the necessary bands.
 
     Returns:
         ee.Image: The image with added spectral index bands.
     """
-    ndvi = image.normalizedDifference(["B8", "B4"]).rename("ndvi")
-    ndwi = image.normalizedDifference(["B3", "B11"]).rename("ndwi")
-    ndbi = image.normalizedDifference(["B11", "B8"]).rename("ndbi")
+    ndvi = image.normalizedDifference(["SR_B5", "SR_B4"]).rename("NDVI")
+    ndwi = image.normalizedDifference(["SR_B3", "SR_B5"]).rename("NDWI")
+    ndbi = image.normalizedDifference(["SR_B6", "SR_B5"]).rename("NDBI")
 
     return image.addBands([ndvi, ndwi, ndbi])
 
@@ -354,7 +495,7 @@ def calculate_lai(image: ee.Image) -> ee.Image:
     Returns:
         ee.Image: The image with an added 'LAI' band.
     """
-    ndvi = image.select("ndvi")
+    ndvi = image.select("NDVI")
 
     # Compute LAI. I have no clue what this formula is... lol.
     lai = (
@@ -452,17 +593,25 @@ def calculate_downscaled_lst(
         ee.Image: The downscaled LST image.
     """
     # Extract intercept and slope coefficients
-    intercept = coefficients["constant"]
-    predictors = s2_indices.bandNames()
-    slope_images = [coefficients[band] for band in predictors.getInfo()]
+    intercept = coefficients.get("constant", ee.Image(0))
 
-    # Compute the downscaled LST
-    downscaled_lst = intercept.add(
-        ee.ImageCollection(slope_images)
-        .toBands()
-        .multiply(s2_indices)
-        .reduce(ee.Reducer.sum())
+    # Define the expected band names
+    expected_bands = ee.List(
+        ["SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7", "NDVI", "NDWI"]
     )
+
+    # Rename bands in s2_indices to match the expected names
+    renamed_s2_indices = s2_indices.rename(expected_bands)
+
+    # Create a list of images, each representing a term in the regression equation
+    regression_terms = expected_bands.map(
+        lambda band: renamed_s2_indices.select([band]).multiply(
+            coefficients.get(band, ee.Image(0))
+        )
+    )
+
+    # Sum all terms and add the intercept
+    downscaled_lst = ee.ImageCollection(regression_terms).sum().add(intercept)
 
     return downscaled_lst.rename("downscaled_LST")
 
@@ -537,7 +686,8 @@ def generate_final_downscaled_lst(
 
 def generate_downscaled_lst(
     lst_band: str,
-    bands_for_downscaling: List[str],
+    sentinel_bands_for_downscaling: List[str],
+    landsat_bands_for_downscaling: List[str],
     initial_scale: float,
     geometry: ee.Geometry,
     l8_image: ee.Image,
@@ -547,7 +697,8 @@ def generate_downscaled_lst(
 
     Args:
         lst_band (str): Name of the LST band in the Landsat 8 image.
-        bands_for_downscaling (List[str]): List of band names to use for downscaling.
+        sentinel_bands_for_downscaling (List[str]): List of band names to use for downscaling in Sentinel-2.
+        landsat_bands_for_downscaling (List[str]): List of band names to use for downscaling in Landsat 8.
         initial_scale (float): Scale (in meters) at which to perform the regression.
         geometry (ee.Geometry): The geometry over which to perform the analysis.
         l8_image (ee.Image): The Landsat 8 image.
@@ -562,27 +713,23 @@ def generate_downscaled_lst(
 
     # Calculate spectral indices
     l8_indices = calculate_spectral_indices(l8_prepared)
-    s2_indices = calculate_spectral_indices(s2_prepared)
-
-    # Calculate LAI
-    l8_with_lai = calculate_lai(l8_indices)
-    s2_with_lai = calculate_lai(s2_indices)
 
     # Prepare regression bands
     regression_image = prepare_regression_bands(
-        l8_with_lai, s2_with_lai, lst_band, bands_for_downscaling
+        l8_indices, s2_prepared, lst_band, landsat_bands_for_downscaling
     )
 
     # Perform linear regression
     coefficients = perform_linear_regression(regression_image, geometry, initial_scale)
 
     # Calculate downscaled LST
-    s2_bands_for_downscaling = s2_with_lai.select(bands_for_downscaling)
+    s2_bands_for_downscaling = s2_prepared.select(sentinel_bands_for_downscaling)
+
     downscaled_lst = calculate_downscaled_lst(s2_bands_for_downscaling, coefficients)
 
     # Calculate LST model and residuals for Landsat 8
     l8_lst = l8_prepared.select(lst_band)
-    l8_bands_for_downscaling = l8_with_lai.select(bands_for_downscaling)
+    l8_bands_for_downscaling = l8_indices.select(landsat_bands_for_downscaling)
     lst_model, residuals = calculate_lst_model_and_residuals(
         l8_lst, l8_bands_for_downscaling, coefficients
     )
