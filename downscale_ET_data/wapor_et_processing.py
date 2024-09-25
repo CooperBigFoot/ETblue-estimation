@@ -4,7 +4,7 @@ import ee
 
 # TODO: aoi should be ee.Geometry and not ee.FeatureCollection
 def load_wapor_et_data(
-    first_year: int, last_year: int, aoi_buffered: ee.FeatureCollection
+    first_year: int, last_year: int, aoi: ee.Geometry
 ) -> ee.ImageCollection:
     """
     Load and process WAPOR ET data for a range of years.
@@ -12,7 +12,7 @@ def load_wapor_et_data(
     Args:
         first_year (int): The first year to process.
         last_year (int): The last year to process.
-        aoi_buffered (ee.FeatureCollection): The buffered area of interest.
+        aoi (ee.FeatureCollection): The buffered area of interest.
 
     Returns:
         ee.ImageCollection: Processed WAPOR ET data.
@@ -39,7 +39,7 @@ def load_wapor_et_data(
             .set("Year", yr)
             .set("system:time_start", ee.Date.fromYMD(yr, mm, 1).millis())
             .rename("ET")
-            .clipToCollection(aoi_buffered)
+            .clip(aoi)
         )
 
     def process_year(yr):
