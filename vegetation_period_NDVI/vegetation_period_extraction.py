@@ -195,7 +195,7 @@ def confirm_double_cropping(
     fittedGreen_low: ee.ImageCollection,
     time_intervals: ee.List,
     end_first: ee.Image,
-    fittedGreenFirst2: ee.Image,
+    start_second_veg_period: ee.Image,
 ) -> ee.Image:
     """
     Confirm double cropping by identifying periods of low NDVI between crops.
@@ -204,7 +204,7 @@ def confirm_double_cropping(
         fittedGreen_low (ee.ImageCollection): Binary vegetation mask collection with lower threshold.
         time_intervals (ee.List): List of time intervals.
         end_first (ee.Image): End of the first vegetation period.
-        fittedGreenFirst2 (ee.Image): Start of the second vegetation period.
+        start_second_veg_period (ee.Image): Start of the second vegetation period.
 
     Returns:
         ee.Image: Image confirming double cropping patterns.
@@ -215,11 +215,14 @@ def confirm_double_cropping(
         condition = sum_image.eq(0).multiply(
             end_first.add(ee.Image(1))
             .lte(ee.Number(x))
-            .And(fittedGreenFirst2.add(ee.Image(2)).gt(ee.Number(x)))
+            .And(start_second_veg_period.add(ee.Image(2)).gt(ee.Number(x)))
         )
         return ee.Image(ee.Number(x)).int().updateMask(condition.eq(1))
 
-    return apply_temporal_operation(fittedGreen_low, time_intervals, operation)
+    double_cropping = apply_temporal_operation(
+        fittedGreen_low, time_intervals, operation
+    )
+    return double_cropping.mask().updateMask(double_cropping.mask())
 
 
 def combine_results(
@@ -250,15 +253,15 @@ def combine_results(
         .addBands(
             second_start.rename("secondStart")
             .addBands(second_end.rename("secondEnd"))
-            .updateMask(double_cropping.eq(1))
+            .updateMask(double_cropping.mask())
         )
     )
 
     start_month = ee.Date(ee.List(time_intervals.get(0)).get(0)).get("month")
     result = result.divide(2).floor().add(ee.Image.constant(start_month))
-
     result = result.where(result.gt(12), result.subtract(12))
-    return result.addBands(double_cropping.rename("isDoubleCropping"))
+
+    return result.addBands(double_cropping.gt(0).rename("isDoubleCropping"))
 
 
 def get_crop_veg_period(
@@ -276,9 +279,7 @@ def get_crop_veg_period(
         ee.Image: Multi-band image containing vegetation period information.
     """
     harmonic_ts_dictionary = get_harmonic_ts(year, aoi, time_intervals)
-    ndvi_collection = harmonic_ts_dictionary.get(
-        "fitted_data"
-    )  # Contains NDVI and fitted bands
+    ndvi_collection = harmonic_ts_dictionary.get("fitted_data")
 
     veg_mask = create_binary_mask(ndvi_collection, NDVI_THRESHOLD)
     veg_mask_low = create_binary_mask(ndvi_collection, NDVI_LOW_THRESHOLD)

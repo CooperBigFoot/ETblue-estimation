@@ -69,20 +69,6 @@ def extract_time_ranges(time_range: List[str], agg_interval: int) -> ee.List:
     return time_intervals
 
 
-import ee
-import math
-from typing import List, Dict, Any
-from utils.composites import harmonized_ts
-from data_loading import (
-    load_sentinel2_data,
-    ndvi_band_to_int,
-    ndvi_band_to_float,
-    add_time_data,
-)
-
-# Initialize Earth Engine
-ee.Initialize(project="thurgau-irrigation")
-
 OMEGA = 1.5  # Temporal frequency. Value from: https://doi.org/10.1016/j.rse.2018.12.026
 MAX_HARMONIC_ORDER = 2  # Maximum order of harmonics
 
@@ -218,16 +204,15 @@ def get_harmonic_ts(
     yearly_sentinel_data = load_sentinel2_data(year, aoi)
 
     # # Convert NDVI to integer representation for cloud filtering
-    # cloud_filtered_data = yearly_sentinel_data.map(ndvi_band_to_int)
+    yearly_sentinel_data = yearly_sentinel_data.map(ndvi_band_to_int)
 
     # Create harmonized time series
     harmonized_data = harmonized_ts(
         yearly_sentinel_data,
-        ["NDVI"],  # NDVI_int
+        ["NDVI_int", "NDVI"],
         time_intervals,
         {"agg_type": "geomedian"},
-    )
-    # .map(lambda img: ndvi_band_to_float(ee.Image(img)))
+    ).map(lambda img: ndvi_band_to_float(ee.Image(img)))
 
     # Add time and constant bands
     harmonized_data = harmonized_data.map(add_time_data)

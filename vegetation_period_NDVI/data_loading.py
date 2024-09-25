@@ -45,7 +45,7 @@ def add_variables(image: ee.Image) -> ee.Image:
         ee.Image: Image with added bands and cloud mask applied.
     """
     ndvi = (
-        image.normalizedDifference(["B8", "B4"]).rename("NDVI").clamp(-1, 1).toFloat()
+        image.normalizedDifference(["B8", "B4"]).rename("NDVI").toFloat() # clamp
     )
     lswi = image.normalizedDifference(["B8", "B11"]).rename(
         "LSWI"
