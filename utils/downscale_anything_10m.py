@@ -10,11 +10,11 @@ import ee
 
 def compute_residuals(original_image: ee.Image, modeled_image: ee.Image) -> ee.Image:
     """
-    Computes the residuals between the original LST and the modeled LST.
+    Computes the residuals between the original and the modeled.
 
     Args:
-        original_image (ee.Image): Original Landsat 8 LST image.
-        modeled_image (ee.Image): Modeled LST based on regression.
+        original_image (ee.Image): Original Landsat 8 image.
+        modeled_image (ee.Image): Modeled based on regression.
 
     Returns:
         ee.Image: Residuals image.
@@ -132,23 +132,23 @@ def apply_regression(independent_vars: ee.Image, coefficients: dict) -> ee.Image
     return predicted.rename("predicted_value")
 
 
-def downscale_lst(
+def downscale(
     dependent_vars: ee.Image,
     independent_vars: ee.Image,
     resolution: int,
     s2_indices: ee.Image,
 ) -> ee.Image:
     """
-    Performs LST downscaling using Landsat 8 and Sentinel-2 data.
+    Performs downscaling.
 
     Args:
-        dependent_vars (ee.Image): Landsat 8 LST image.
+        dependent_vars (ee.Image): Landsat 8 image.
         independent_vars (ee.Image): Landsat 8 spectral indices (NDVI, NDBI, NDWI).
         resolution (int): Resolution of the input images in meters.
         s2_indices (ee.Image): Sentinel-2 spectral indices (NDVI, NDBI, NDWI). Must be at 10m resolution.
 
     Returns:
-        ee.Image: Downscaled LST image at Sentinel-2 resolution.
+        ee.Image: Downscaled image at Sentinel-2 resolution.
     """
     regression_result = perform_regression(independent_vars, dependent_vars, resolution)
 
@@ -160,8 +160,8 @@ def downscale_lst(
 
     smoothed_residuals = apply_gaussian_smoothing(residuals)
 
-    s2_lst_downscaled = apply_regression(s2_indices, coefficients)
+    s2_downscaled = apply_regression(s2_indices, coefficients)
 
-    final_downscaled_lst = s2_lst_downscaled.add(smoothed_residuals)
+    final_downscaled = s2_downscaled.add(smoothed_residuals)
 
-    return final_downscaled_lst.rename("downscaled_LST")
+    return final_downscaled.rename("downscaled")
