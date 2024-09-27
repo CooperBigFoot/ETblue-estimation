@@ -16,6 +16,9 @@ def load_wapor_et_data(
         ee.ImageCollection: Processed WAPOR ET dekadal data.
     """
 
+    # Define the target projection (EPSG:4326)
+    target_projection = ee.Projection("EPSG:4326")
+
     def process_dekad(dekad, yr):
         # Calculate month and dekad within month
         month = ee.Number(dekad).add(2).divide(3).ceil().clamp(1, 12).int()
@@ -47,8 +50,8 @@ def load_wapor_et_data(
                 .advance(ee.Number(dekad).subtract(1).multiply(10), "day")
                 .millis(),
             )
-            .rename("ET")
             .clip(aoi)
+            .rename("ET")
         )
 
     def process_year(yr):
@@ -58,12 +61,5 @@ def load_wapor_et_data(
     wapor_eta_dekadal = ee.ImageCollection(
         ee.List.sequence(first_year, last_year).map(process_year).flatten()
     )
-
-    # Process first 6 dekads of the following year
-    next_year = last_year + 1
-    additional_dekads = ee.List.sequence(1, 6).map(
-        lambda dekad: process_dekad(dekad, next_year)
-    )
-    wapor_eta_dekadal = wapor_eta_dekadal.merge(ee.ImageCollection(additional_dekads))
 
     return wapor_eta_dekadal

@@ -2,7 +2,7 @@ import ee
 import math
 from typing import List, Dict, Any
 from utils.composites import harmonized_ts
-from data_loading import (
+from .data_loading import (
     load_sentinel2_data,
     ndvi_band_to_int,
     ndvi_band_to_float,
@@ -83,6 +83,9 @@ def add_harmonic_components(image: ee.Image) -> ee.Image:
     return image
 
 
+# File: /src/gee_processing/time_series_utils.py
+
+
 def compute_harmonic_fit(
     vegetation_index: str,
     input_image_collection: ee.ImageCollection,
@@ -94,8 +97,6 @@ def compute_harmonic_fit(
 
         y(t) = b0 + sum(b2i*cos(2*pi*i*omega*t) + b2i+1*sin(2*pi*i*omega*t)) for i = 1 to n
 
-    as in the paper: https://doi.org/10.1016/j.rse.2018.12.026
-
     Args:
         vegetation_index (str): Name of the vegetation index.
         input_image_collection (ee.ImageCollection): Input image collection.
@@ -104,7 +105,7 @@ def compute_harmonic_fit(
     Returns:
         ee.ImageCollection: Image collection with fitted values and RMSE.
     """
-    harmonic_component_names = ["constant"] + [
+    harmonic_component_names = ["constant", "t"] + [
         f"{trig}{i}"
         for i in range(1, MAX_HARMONIC_ORDER + 1)
         for trig in ["cos", "sin"]
@@ -120,9 +121,18 @@ def compute_harmonic_fit(
         ee.String(vegetation_index)
     )
 
-    regression_result = harmonic_image_collection.select(regression_input_bands).reduce(
-        reducer=ee.Reducer.linearRegression(harmonic_component_names.length(), 1),
-        parallelScale=parallel_scale,
+    # Get the projection and scale from the first image
+    first_image = input_image_collection.first().select(vegetation_index)
+    original_projection = first_image.projection()
+    original_scale = original_projection.nominalScale()
+
+    regression_result = (
+        harmonic_image_collection.select(regression_input_bands)
+        .reduce(
+            reducer=ee.Reducer.linearRegression(harmonic_component_names.length(), 1),
+            parallelScale=parallel_scale,
+        )
+        .setDefaultProjection(original_projection, None, original_scale)
     )
 
     regression_coefficients = (
@@ -132,18 +142,14 @@ def compute_harmonic_fit(
     )
 
     def compute_fitted_values_and_performance(image: ee.Image) -> ee.Image:
-        """Compute fitted values and pwrformance metrics, and add them as new bands to the image.
-
-        Args:
-            image (ee.Image): Input image.
-
-        Returns:
-            ee.Image: Image with fitted values, RMSE and PBIAS."""
+        """Compute fitted values and performance metrics, and add them as new bands to the image."""
         fitted_values = (
             image.select(harmonic_component_names)
             .multiply(regression_coefficients)
             .reduce(ee.Reducer.sum())
+            .max(0)
             .rename("fitted")
+            .setDefaultProjection(original_projection, None, original_scale)
         )
 
         rmse = (
@@ -152,6 +158,7 @@ def compute_harmonic_fit(
             .pow(2)
             .sqrt()
             .rename("rmse")
+            .setDefaultProjection(original_projection, None, original_scale)
         )
 
         return image.addBands(fitted_values).addBands(rmse)
@@ -187,7 +194,9 @@ def calculate_phase_amplitude(regression_coefficients: ee.Image) -> ee.Image:
 
 
 def get_harmonic_ts(
-    year: int, aoi: ee.Geometry, time_intervals: ee.List
+    year: int,
+    aoi: ee.Geometry,
+    time_intervals: ee.List,
 ) -> Dict[str, Any]:
     """
     Generate a harmonized time series with harmonic regression for a given year and area.
@@ -236,14 +245,7 @@ def get_harmonic_ts(
     fitted_data = compute_harmonic_fit("NDVI", harmonized_data, 2)
 
     # Extract regression coefficients from the first image
-    regression_coefficients = fitted_data.first().select(
-        ["constant"]
-        + [
-            f"{trig}{i}"
-            for i in range(1, MAX_HARMONIC_ORDER + 1)
-            for trig in ["cos", "sin"]
-        ]
-    )
+    regression_coefficients = get_regression_coefficients(fitted_data)
 
     # Calculate phase and amplitude
     phase_amplitude = calculate_phase_amplitude(regression_coefficients)
@@ -253,3 +255,27 @@ def get_harmonic_ts(
         "regression_coefficients": regression_coefficients,
         "phase_amplitude": phase_amplitude,
     }
+
+
+def get_regression_coefficients(
+    fitted_image_collection: ee.ImageCollection,
+) -> ee.Image:
+    """
+    Compute regression coefficients for a time series of images.
+
+    Args:
+        fitted_image_collection (ee.ImageCollection): Image collection containing fitted values.
+
+    Returns:
+        ee.Image: Image containing regression coefficients.
+    """
+    regression_coefficients = fitted_image_collection.first().select(
+        ["constant", "t"]
+        + [
+            f"{trig}{i}"
+            for i in range(1, MAX_HARMONIC_ORDER + 1)
+            for trig in ["cos", "sin"]
+        ]
+    )
+
+    return regression_coefficients

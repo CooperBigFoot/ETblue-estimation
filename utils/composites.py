@@ -87,7 +87,18 @@ def aggregate_stack(
         return empty_image.set(timestamp).float()
 
     def apply_reducer(reducer):
-        return filtered_collection.reduce(reducer).rename(band_list).set(timestamp)
+        # Preserve the original projection and scale
+        first_image = filtered_collection.first().select(0)
+        original_projection = first_image.projection()
+        original_scale = original_projection.nominalScale()
+
+        return (
+            filtered_collection.reduce(reducer)
+            .rename(band_list)
+            .setDefaultProjection(original_projection)
+            .reproject(crs=original_projection, scale=original_scale)
+            .set(timestamp)
+        )
 
     if agg_type == "geomedian":
         reducer = ee.Reducer.geometricMedian(len(band_list))
