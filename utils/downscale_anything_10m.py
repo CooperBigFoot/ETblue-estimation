@@ -41,17 +41,17 @@ def apply_gaussian_smoothing(image: ee.Image, radius: float = 1.5) -> ee.Image:
 def perform_regression(
     independent_vars: ee.Image,
     dependent_var: ee.Image,
-    image_resolution: int,
     geometry: ee.Geometry,
+    scale: float,
 ) -> ee.Dictionary:
     """
     Performs linear regression using independent variables to predict the dependent variable.
 
     Args:
-        independent_vars (ee.Image): Image containing bands of independent variables. It should have three bands: fitted_NDVI, fitted_NDBI, and fitted_NDWI.
+        independent_vars (ee.Image): Image containing bands of independent variables.
         dependent_var (ee.Image): Single-band image of the dependent variable.
-        image_resolution (int): Resolution of the input images in meters.
         geometry (ee.Geometry): The geometry over which to perform the regression.
+        scale (float): The scale at which to perform the regression.
 
     Returns:
         ee.Dictionary: The result of the linear regression.
@@ -61,23 +61,27 @@ def perform_regression(
         ["fitted_NDVI", "fitted_NDBI", "fitted_NDWI"]
     )
 
+    independent_vars = ee.Image.constant(1).addBands(independent_vars)
+
     # Ensure the dependent_var image has the correct band
     dependent_var = dependent_var.select(["ET"])
 
+    # Combine independent and dependent variables
     all_vars = independent_vars.addBands(dependent_var)
 
-    independent_names = independent_vars.bandNames()
-    full_regression = all_vars.reduceRegion(
-        reducer=ee.Reducer.linearRegression(numX=independent_names.length(), numY=1),
+    # Perform the regression
+    regression = all_vars.reduceRegion(
+        reducer=ee.Reducer.linearRegression(numX=4, numY=1),
         geometry=geometry,
-        scale=image_resolution,
+        scale=scale,
         maxPixels=1e13,
+        tileScale=16,
     )
 
-    return full_regression
+    return regression
 
 
-def extract_coefficients(regression_result: ee.Dictionary) -> Dict:
+def extract_coefficients(regression_result: ee.Dictionary) -> Dict[str, ee.Image]:
     """
     Extracts coefficients from the regression result and stores them as separate ee.Image objects.
 
@@ -85,61 +89,37 @@ def extract_coefficients(regression_result: ee.Dictionary) -> Dict:
         regression_result (ee.Dictionary): The result of the linear regression.
 
     Returns:
-        dict: A dictionary containing the intercept and slope coefficients as ee.Image objects.
+        Dict[str, ee.Image]: A dictionary containing the intercept and slope coefficients as ee.Image objects.
     """
-    coefficients = regression_result.get("coefficients")
 
-    coefficients_array = ee.Array(coefficients)
-
-    coefficients_list = coefficients_array.toList()
-
-    # Extract individual coefficients
-    intercept = ee.Image(ee.Number(ee.List(coefficients_list.get(0)).get(0)))
-    slope_fitted_ndvi = ee.Image(ee.Number(ee.List(coefficients_list.get(1)).get(0)))
-    slope_fitted_ndbi = ee.Image(ee.Number(ee.List(coefficients_list.get(2)).get(0)))
-    slope_fitted_ndwi = ee.Image(ee.Number(ee.List(coefficients_list.get(3)).get(0)))
-
-    # Return coefficients as a dictionary
+    regression_result = ee.Dictionary(regression_result)
+    coefficients = ee.Array(regression_result.get("coefficients"))
     return {
-        "intercept": intercept,
-        "slope_fitted_ndvi": slope_fitted_ndvi,
-        "slope_fitted_ndbi": slope_fitted_ndbi,
-        "slope_fitted_ndwi": slope_fitted_ndwi,
+        "intercept": ee.Image(coefficients.get([0, 0])),
+        "slope_fitted_ndvi": ee.Image(coefficients.get([1, 0])),
+        "slope_fitted_ndbi": ee.Image(coefficients.get([2, 0])),
+        "slope_fitted_ndwi": ee.Image(coefficients.get([3, 0])),
     }
 
 
-def apply_regression(independent_vars: ee.Image, coefficients: Dict) -> ee.Image:
-    """
-    Applies regression coefficients to an image with independent variables
-    to predict the dependent variable.
-
-    Args:
-        independent_vars (ee.Image): Image containing bands of independent variables.
-        coefficients (dict): Dictionary containing regression coefficients as ee.Image objects.
-
-    Returns:
-        ee.Image: Predicted values of the dependent variable.
-    """
-    # Ensure the independent_vars image has the correct bands
+def apply_regression(
+    independent_vars: ee.Image, coefficients: ee.Dictionary
+) -> ee.Image:
     independent_vars = independent_vars.select(
         ["fitted_NDVI", "fitted_NDBI", "fitted_NDWI"]
     )
-
-    # Extract individual coefficients
-    intercept = coefficients["intercept"]
-    slope_fitted_ndvi = coefficients["slope_fitted_ndvi"]
-    slope_fitted_ndbi = coefficients["slope_fitted_ndbi"]
-    slope_fitted_ndwi = coefficients["slope_fitted_ndwi"]
-
-    # Apply the regression equation
-    predicted = (
-        intercept.add(
-            independent_vars.select("fitted_NDVI").multiply(slope_fitted_ndvi)
-        )
-        .add(independent_vars.select("fitted_NDBI").multiply(slope_fitted_ndbi))
-        .add(independent_vars.select("fitted_NDWI").multiply(slope_fitted_ndwi))
+    # Multiply each independent variable by its corresponding coefficient
+    predicted = ee.Image(coefficients.get("intercept")).add(
+        independent_vars.multiply(
+            ee.Image.cat(
+                [
+                    ee.Image(coefficients.get("slope_fitted_ndvi")),
+                    ee.Image(coefficients.get("slope_fitted_ndbi")),
+                    ee.Image(coefficients.get("slope_fitted_ndwi")),
+                ]
+            )
+        ).reduce("sum")
     )
-
     return predicted.rename("predicted_value")
 
 
@@ -150,33 +130,33 @@ def downscale(
     s2_indices: ee.Image,
     geometry: ee.Geometry,
 ) -> ee.Image:
-    """
-    Performs downscaling.
-
-    Args:
-        dependent_vars (ee.Image): Landsat 8 image.
-        independent_vars (ee.Image): Landsat 8 spectral indices (fitted_NDVI, fitted_NDBI, fitted_NDWI).
-        resolution (int): Resolution of the input images in meters.
-        s2_indices (ee.Image): Sentinel-2 spectral indices (fitted_NDVI, fitted_NDBI, fitted_NDWI). Must be at 10m resolution.
-        geometry (ee.Geometry): The geometry over which to perform the downscaling.
-
-    Returns:
-        ee.Image: Downscaled image at Sentinel-2 resolution.
-    """
     regression_result = perform_regression(
-        independent_vars, dependent_vars, resolution, geometry
+        independent_vars, dependent_vars, geometry, resolution
     )
 
+    # Use ee.Algorithms.If to handle potential null results
     coefficients = extract_coefficients(regression_result)
 
-    dependent_vars_modeled = apply_regression(independent_vars, coefficients)
-
+    dependent_vars_modeled = apply_regression(
+        independent_vars, ee.Dictionary(coefficients)
+    )
     residuals = compute_residuals(dependent_vars, dependent_vars_modeled)
-
     smoothed_residuals = apply_gaussian_smoothing(residuals)
 
-    s2_downscaled = apply_regression(s2_indices, coefficients)
+    # Ensure consistent resolution and projection
+    s2_projection = s2_indices.projection()
+    s2_downscaled = apply_regression(s2_indices, ee.Dictionary(coefficients)).reproject(
+        s2_projection
+    )
+    smoothed_residuals = smoothed_residuals.reproject(s2_projection)
 
     final_downscaled = s2_downscaled.add(smoothed_residuals)
+    s2_date = s2_indices.date()
+    scale = s2_projection.nominalScale()
 
-    return final_downscaled.rename("downscaled")
+    final_downscaled_with_metadata = (
+        final_downscaled.rename("downscaled")
+        .set("system:time_start", s2_date.millis())
+        .setDefaultProjection(s2_projection, None, scale)
+    )
+    return final_downscaled_with_metadata

@@ -1,3 +1,5 @@
+# File: /src/utils/composites.py
+
 import ee
 from typing import List, Dict, Any, Optional
 
@@ -43,6 +45,15 @@ def harmonized_ts(
     agg_stack = ee.List(time_intervals).iterate(_stack_bands, stack)
 
     return ee.ImageCollection(ee.List(agg_stack)).sort("system:time_start")
+
+
+def _preserve_projection_and_scale(
+    image: ee.Image, original_projection: ee.Projection, original_scale: ee.Number
+) -> ee.Image:
+    """Helper function to preserve the original projection and scale of an image."""
+    return image.setDefaultProjection(original_projection).reproject(
+        crs=original_projection, scale=original_scale
+    )
 
 
 def aggregate_stack(
@@ -92,31 +103,29 @@ def aggregate_stack(
             empty_image = empty_image.addBands(ee.Image.constant(0).rename(band))
         return empty_image.set(timestamp).float()
 
-    def apply_reducer(reducer):
-        # Preserve the original projection and scale
-        first_image = filtered_collection.first().select(0)
-        original_projection = first_image.projection()
-        original_scale = original_projection.nominalScale()
+    # Preserve the original projection and scale
+    first_image = filtered_collection.first().select(0)
+    original_projection = first_image.projection()
+    original_scale = original_projection.nominalScale()
 
-        return (
-            filtered_collection.reduce(reducer)
-            .rename(band_list)
-            .setDefaultProjection(original_projection)
-            .reproject(crs=original_projection, scale=original_scale)
-            .set(timestamp)
+    def apply_reducer(reducer):
+        return _preserve_projection_and_scale(
+            filtered_collection.reduce(reducer).rename(band_list).set(timestamp),
+            original_projection,
+            original_scale,
         )
 
     def apply_mosaic():
         if mosaic_type == "recent":
-            return filtered_collection.mosaic().set(timestamp)
+            mosaic_image = filtered_collection.mosaic()
         elif mosaic_type == "least_cloudy":
-            return (
-                filtered_collection.sort("CLOUDY_PIXEL_PERCENTAGE")
-                .mosaic()
-                .set(timestamp)
-            )
+            mosaic_image = filtered_collection.sort("CLOUDY_PIXEL_PERCENTAGE").mosaic()
         else:
             raise ValueError(f"Invalid mosaic_type: {mosaic_type}")
+
+        return _preserve_projection_and_scale(
+            mosaic_image.set(timestamp), original_projection, original_scale
+        )
 
     if agg_type == "geomedian":
         reducer = ee.Reducer.geometricMedian(len(band_list))
