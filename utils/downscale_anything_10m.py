@@ -23,7 +23,7 @@ def compute_residuals(original_image: ee.Image, modeled_image: ee.Image) -> ee.I
     return original_image.subtract(modeled_image).rename("residuals")
 
 
-def apply_gaussian_smoothing(image: ee.Image, radius: float = 1.5) -> ee.Image:
+def apply_gaussian_smoothing(image: ee.Image, radius: float = 1) -> ee.Image:
     """
     Applies Gaussian smoothing to an image.
 
@@ -56,14 +56,13 @@ def perform_regression(
     Returns:
         ee.Dictionary: The result of the linear regression.
     """
-    # Ensure the independent_vars image has the correct bands
+
     independent_vars = independent_vars.select(
         ["fitted_NDVI", "fitted_NDBI", "fitted_NDWI"]
     )
 
     independent_vars = ee.Image.constant(1).addBands(independent_vars)
 
-    # Ensure the dependent_var image has the correct band
     dependent_var = dependent_var.select(["ET"])
 
     # Combine independent and dependent variables
@@ -93,66 +92,76 @@ def extract_coefficients(regression_result: ee.Dictionary) -> Dict[str, ee.Image
     """
 
     regression_result = ee.Dictionary(regression_result)
-    coefficients = ee.Array(regression_result.get("coefficients"))
+    coefficients = ee.Array(regression_result.get("coefficients")).toList()
+
     return {
-        "intercept": ee.Image(coefficients.get([0, 0])),
-        "slope_fitted_ndvi": ee.Image(coefficients.get([1, 0])),
-        "slope_fitted_ndbi": ee.Image(coefficients.get([2, 0])),
-        "slope_fitted_ndwi": ee.Image(coefficients.get([3, 0])),
+        "intercept": ee.List(coefficients.get(0)).get(0),
+        "slope_fitted_ndvi": ee.List(coefficients.get(1)).get(0),
+        "slope_fitted_ndbi": ee.List(coefficients.get(2)).get(0),
+        "slope_fitted_ndwi": ee.List(coefficients.get(3)).get(0),
     }
 
 
 def apply_regression(
     independent_vars: ee.Image, coefficients: ee.Dictionary
 ) -> ee.Image:
-    independent_vars = independent_vars.select(
-        ["fitted_NDVI", "fitted_NDBI", "fitted_NDWI"]
+    """
+    Applies the regression coefficients to the independent variables to predict the dependent variable.
+
+    Args:
+        independent_vars (ee.Image): Image containing bands of independent variables.
+        coefficients (ee.Dictionary): Dictionary containing the intercept and slope coefficients.
+
+    Returns:
+        ee.Image: The predicted dependent variable.
+    """
+    intercept = ee.Image.constant(coefficients.get("intercept"))
+    slope_ndvi = ee.Image.constant(coefficients.get("slope_fitted_ndvi"))
+    slope_ndbi = ee.Image.constant(coefficients.get("slope_fitted_ndbi"))
+    slope_ndwi = ee.Image.constant(coefficients.get("slope_fitted_ndwi"))
+
+    # Apply regression equation
+    predicted = (
+        intercept.add(independent_vars.select("fitted_NDVI").multiply(slope_ndvi))
+        .add(independent_vars.select("fitted_NDBI").multiply(slope_ndbi))
+        .add(independent_vars.select("fitted_NDWI").multiply(slope_ndwi))
     )
-    # Multiply each independent variable by its corresponding coefficient
-    predicted = ee.Image(coefficients.get("intercept")).add(
-        independent_vars.multiply(
-            ee.Image.cat(
-                [
-                    ee.Image(coefficients.get("slope_fitted_ndvi")),
-                    ee.Image(coefficients.get("slope_fitted_ndbi")),
-                    ee.Image(coefficients.get("slope_fitted_ndwi")),
-                ]
-            )
-        ).reduce("sum")
-    )
-    return predicted.rename("predicted_value")
+
+    return predicted.rename("predicted")
 
 
 def downscale(
-    dependent_vars: ee.Image,
     independent_vars: ee.Image,
+    dependent_vars: ee.Image,
     resolution: int,
     s2_indices: ee.Image,
     geometry: ee.Geometry,
 ) -> ee.Image:
+
+    s2_projection = s2_indices.projection()
+    s2_date = s2_indices.date()
+    scale = s2_projection.nominalScale()
+
     regression_result = perform_regression(
         independent_vars, dependent_vars, geometry, resolution
     )
 
-    # Use ee.Algorithms.If to handle potential null results
     coefficients = extract_coefficients(regression_result)
 
     dependent_vars_modeled = apply_regression(
         independent_vars, ee.Dictionary(coefficients)
-    )
+    ).reproject(s2_projection)
+
     residuals = compute_residuals(dependent_vars, dependent_vars_modeled)
+
     smoothed_residuals = apply_gaussian_smoothing(residuals)
 
-    # Ensure consistent resolution and projection
-    s2_projection = s2_indices.projection()
     s2_downscaled = apply_regression(s2_indices, ee.Dictionary(coefficients)).reproject(
         s2_projection
     )
     smoothed_residuals = smoothed_residuals.reproject(s2_projection)
 
     final_downscaled = s2_downscaled.add(smoothed_residuals)
-    s2_date = s2_indices.date()
-    scale = s2_projection.nominalScale()
 
     final_downscaled_with_metadata = (
         final_downscaled.rename("downscaled")
