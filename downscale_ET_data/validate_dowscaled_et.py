@@ -128,7 +128,7 @@ def prepare_data_for_plotting(feature_collection: ee.FeatureCollection) -> pd.Da
                 "date": datetime.strptime(
                     feat["properties"]["date_[YYYYmmdd]"], "%Y-%m-%d"
                 ),
-                "flux_net_et": feat["properties"]["evapotranspiration_[mm/month]"],
+                "flux_net_et": feat["properties"]["evapotranspiration_[mm/d]"],
                 "raster_et": feat["properties"].get(
                     "raster_et", None
                 ),  # Use .get() to avoid KeyError

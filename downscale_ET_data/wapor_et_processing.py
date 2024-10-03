@@ -17,10 +17,10 @@ def load_wapor_et_data(
     """
 
     def process_dekadal(dekad, yr):
-        month = ee.Number(dekad).add(2).divide(3).ceil().clamp(1, 12).int()
-
+        month = ee.Number(dekad).divide(3).floor().add(1).int()
         dekad_in_month = ee.Number(dekad).mod(3).add(1).int()
-
+        start_day = dekad_in_month.subtract(1).multiply(10).add(1)
+        start_date = ee.Date.fromYMD(yr, month, start_day)
         url = (
             ee.String(
                 "gs://fao-gismgr-wapor-3-data/DATA/WAPOR-3/MAPSET/L1-AETI-D/WAPOR-3.L1-AETI-D."
@@ -32,17 +32,11 @@ def load_wapor_et_data(
             .cat(ee.Number(dekad_in_month).format("%d"))
             .cat(".tif")
         )
-
         return (
             ee.Image.loadGeoTIFF(url)
             .multiply(0.1)
             .int()
-            .set(
-                "system:time_start",
-                ee.Date.fromYMD(yr, month, 1)
-                .advance(ee.Number(dekad).subtract(1).multiply(10), "day")
-                .millis(),
-            )
+            .set("system:time_start", start_date.millis())
             .set("Month", month)
             .set("Year", yr)
             .rename("ET")
