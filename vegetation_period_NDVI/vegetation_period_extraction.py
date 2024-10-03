@@ -1,7 +1,7 @@
 import ee
 from typing import List, Dict, Any, Callable
 from utils.composites import harmonized_ts
-from time_series import get_harmonic_ts
+from vegetation_period_NDVI.time_series import get_harmonic_ts
 
 # Constants
 NDVI_THRESHOLD = 0.35

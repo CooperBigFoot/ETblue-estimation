@@ -42,6 +42,7 @@ def export_collection_to_assets(
     region: ee.Geometry,
     project_name: str,
     asset_folder: str,
+    scale: int = 30,
     max_concurrent: int = 3,
     delay: int = 60,
 ) -> None:
@@ -63,7 +64,7 @@ def export_collection_to_assets(
 
     for i in range(size):
         image = ee.Image(image_list.get(i))
-        task = export_image_to_asset(image, region, project_name, asset_folder)
+        task = export_image_to_asset(image, region, project_name, asset_folder, scale=scale)
 
         while len(active_tasks) >= max_concurrent:
             active_tasks = [task for task in active_tasks if task.active()]

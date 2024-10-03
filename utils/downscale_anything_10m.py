@@ -56,7 +56,6 @@ def perform_regression(
     Returns:
         ee.Dictionary: The result of the linear regression.
     """
-
     independent_vars = independent_vars.select(
         ["fitted_NDVI", "fitted_NDBI", "fitted_NDWI"]
     )
@@ -68,9 +67,11 @@ def perform_regression(
     # Combine independent and dependent variables
     all_vars = independent_vars.addBands(dependent_var)
 
+    numX = ee.List(independent_vars.bandNames()).length()
+
     # Perform the regression
     regression = all_vars.reduceRegion(
-        reducer=ee.Reducer.linearRegression(numX=4, numY=1),
+        reducer=ee.Reducer.linearRegression(numX=numX, numY=1),
         geometry=geometry,
         scale=scale,
         maxPixels=1e13,
@@ -115,13 +116,13 @@ def apply_regression(
     Returns:
         ee.Image: The predicted dependent variable.
     """
-    intercept = ee.Image.constant(coefficients.get("intercept"))
-    slope_ndvi = ee.Image.constant(coefficients.get("slope_fitted_ndvi"))
-    slope_ndbi = ee.Image.constant(coefficients.get("slope_fitted_ndbi"))
-    slope_ndwi = ee.Image.constant(coefficients.get("slope_fitted_ndwi"))
+    intercept = ee.Image(ee.Number((coefficients.get("intercept"))))
+    slope_ndvi = ee.Image(ee.Number((coefficients.get("slope_fitted_ndvi"))))
+    slope_ndbi = ee.Image(ee.Number((coefficients.get("slope_fitted_ndbi"))))
+    slope_ndwi = ee.Image(ee.Number((coefficients.get("slope_fitted_ndwi"))))
 
     # Apply regression equation
-    predicted = (
+    predicted = ee.Image(
         intercept.add(independent_vars.select("fitted_NDVI").multiply(slope_ndvi))
         .add(independent_vars.select("fitted_NDBI").multiply(slope_ndbi))
         .add(independent_vars.select("fitted_NDWI").multiply(slope_ndwi))
@@ -150,16 +151,15 @@ def downscale(
 
     dependent_vars_modeled = apply_regression(
         independent_vars, ee.Dictionary(coefficients)
-    ).reproject(s2_projection)
+    )
 
     residuals = compute_residuals(dependent_vars, dependent_vars_modeled)
 
     smoothed_residuals = apply_gaussian_smoothing(residuals)
 
-    s2_downscaled = apply_regression(s2_indices, ee.Dictionary(coefficients)).reproject(
-        s2_projection
-    )
-    smoothed_residuals = smoothed_residuals.reproject(s2_projection)
+    s2_downscaled = apply_regression(s2_indices, ee.Dictionary(coefficients))
+
+    smoothed_residuals = smoothed_residuals
 
     final_downscaled = s2_downscaled.add(smoothed_residuals)
 
