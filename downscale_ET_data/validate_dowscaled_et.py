@@ -3,8 +3,9 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
 from typing import List, Dict
-
-ee.Initialize()
+import seaborn as sns
+import matplotlib.pyplot as plt
+from datetime import datetime
 
 
 def reproject_coordinates(
@@ -44,7 +45,7 @@ def pandas_series_to_ee_features(
     features = []
     for date, value in series.items():
         feature = ee.Feature(
-            ee.Geometry.Point([lon, lat]),
+            ee.Geometry.Point([lon, lat]).transform("EPSG:4326"),
             {
                 "date_[YYYYmmdd]": date.strftime("%Y-%m-%d"),
                 "evapotranspiration_[mm/d]": float(value),
@@ -75,23 +76,69 @@ def create_ee_feature_collection(
     Returns:
         ee.FeatureCollection: Earth Engine FeatureCollection containing the time series data.
     """
-    point_wgs84 = reproject_coordinates(x, y, from_epsg, to_epsg)
-    lon, lat = point_wgs84.x, point_wgs84.y
+    point_wgs84 = Point([x, y])
+    lon, lat = point_wgs84.xy[0][0], point_wgs84.xy[1][0]
 
     features = pandas_series_to_ee_features(daily_evapotranspiration, lon, lat)
     return ee.FeatureCollection(features).sort("system:time_start")
 
 
-def export_feature_collection_to_asset(fc: ee.FeatureCollection, asset_id: str):
+def extract_raster_values(
+    raster_image: ee.Image, feature_collection: ee.FeatureCollection
+) -> ee.FeatureCollection:
     """
-    Export a FeatureCollection to Earth Engine Assets.
+    Extract raster values at the locations specified by the feature collection.
 
     Args:
-        fc (ee.FeatureCollection): FeatureCollection to export.
-        asset_id (str): Asset ID for the exported FeatureCollection.
+        raster_image (ee.Image): Single-band raster image with evapotranspiration values.
+        feature_collection (ee.FeatureCollection): Collection of flux net station measurements.
+
+    Returns:
+        ee.FeatureCollection: Original collection with added raster value.
     """
-    task = ee.batch.Export.table.toAsset(
-        collection=fc, description="Export daily evapotranspiration", assetId=asset_id
+
+    def extract_at_point(feature: ee.Feature) -> ee.Feature:
+        point_value = raster_image.reduceRegion(
+            reducer=ee.Reducer.first(),
+            geometry=feature.geometry(),
+            scale=10,  # 10m resolution as specified
+        ).get("downscaled")
+        return feature.set("raster_et", point_value)
+
+    return feature_collection.map(extract_at_point)
+
+
+def prepare_data_for_plotting(feature_collection: ee.FeatureCollection) -> pd.DataFrame:
+    """
+    Prepare the feature collection data for plotting by converting to a pandas DataFrame.
+
+    Args:
+        feature_collection (ee.FeatureCollection): Collection with flux net and raster values.
+
+    Returns:
+        pd.DataFrame: DataFrame ready for plotting.
+    """
+    # Get the data as a list of dictionaries
+    data = feature_collection.getInfo()["features"]
+
+    # Convert to pandas DataFrame
+    df = pd.DataFrame(
+        [
+            {
+                "date": datetime.strptime(
+                    feat["properties"]["date_[YYYYmmdd]"], "%Y-%m-%d"
+                ),
+                "flux_net_et": feat["properties"]["evapotranspiration_[mm/month]"],
+                "raster_et": feat["properties"].get(
+                    "raster_et", None
+                ),  # Use .get() to avoid KeyError
+            }
+            for feat in data
+        ]
     )
-    task.start()
-    print(f"Export task started. Asset ID: {asset_id}")
+
+    # Ensure the date is set as the index and sorted
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date").sort_index()
+
+    return df
