@@ -29,7 +29,7 @@ def set_plot_style():
     # Set font styles
     plt.rcParams["font.family"] = "sans-serif"
     plt.rcParams["font.sans-serif"] = ["Arial", "Helvetica", "DejaVu Sans"]
-    plt.rcParams["font.size"] = 12
+    plt.rcParams["font.size"] = 14
 
     # Line styles and widths
     plt.rcParams["lines.linewidth"] = 2.5
@@ -57,7 +57,7 @@ def set_plot_style():
     plt.rcParams["axes.edgecolor"] = "#212121"  
 
     # Legend
-    plt.rcParams["legend.fontsize"] = 12
+    plt.rcParams["legend.fontsize"] = 14
     plt.rcParams["legend.frameon"] = False
     plt.rcParams["legend.loc"] = "best"
 

@@ -17,7 +17,7 @@ def r_squared(y_true, y_pred):
     """
     ss_res = np.sum((y_true - y_pred) ** 2)
     ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
-    return 1 - (ss_res / ss_tot)
+    return round(1 - (ss_res / ss_tot), 1)
 
 
 def correlation_coefficient(y_true, y_pred):
@@ -31,7 +31,7 @@ def correlation_coefficient(y_true, y_pred):
     Returns:
         float: Correlation coefficient
     """
-    return stats.pearsonr(y_true, y_pred)[0]
+    return round(stats.pearsonr(y_true, y_pred)[0], 1)
 
 
 def dynamic_time_warping(y_true, y_pred):
@@ -45,7 +45,7 @@ def dynamic_time_warping(y_true, y_pred):
     Returns:
         float: DTW distance
     """
-    return dtw.distance(y_true, y_pred)
+    return round(dtw.distance(y_true, y_pred), 1)
 
 
 def mean_absolute_error(y_true, y_pred):
@@ -59,7 +59,7 @@ def mean_absolute_error(y_true, y_pred):
     Returns:
         float: MAE value
     """
-    return np.mean(np.abs(y_true - y_pred))
+    return round(np.mean(np.abs(y_true - y_pred)), 1)
 
 
 def root_mean_square_error(y_true, y_pred):
@@ -73,7 +73,7 @@ def root_mean_square_error(y_true, y_pred):
     Returns:
         float: RMSE value
     """
-    return np.sqrt(np.mean((y_true - y_pred) ** 2))
+    return round(np.sqrt(np.mean((y_true - y_pred) ** 2)), 1)
 
 
 def normalized_root_mean_square_error(y_true, y_pred):
@@ -87,7 +87,9 @@ def normalized_root_mean_square_error(y_true, y_pred):
     Returns:
         float: NRMSE value
     """
-    return root_mean_square_error(y_true, y_pred) / (np.max(y_true) - np.min(y_true))
+    return round(
+        root_mean_square_error(y_true, y_pred) / (np.max(y_true) - np.min(y_true)), 1
+    )
 
 
 def calculate_metrics(model_results, validation_data):
