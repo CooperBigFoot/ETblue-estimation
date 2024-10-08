@@ -15,20 +15,19 @@ def set_negative_to_zero(image: ee.Image) -> ee.Image:
     return image.where(image.lt(0), 0)
 
 
-def merge_et_collections(years: List[int]) -> ee.ImageCollection:
+def merge_et_collections(years: List[int], asset_name: str) -> ee.ImageCollection:
     """
     Merge ET collections for multiple years.
 
     Args:
         years (list): List of years to process.
+        asset_name (str): Name of the asset to merge.
 
     Returns:
         ee.ImageCollection: Merged ET collection for all years.
     """
     collections = [
-        ee.ImageCollection(
-            f"projects/thurgau-irrigation/assets/Thurgau/ET_WaPOR_10m_dekadal_{year}"
-        )
+        ee.ImageCollection(f"{asset_name}_{year}")
         .sort("system:time_start")
         .map(set_negative_to_zero)
         for year in years
