@@ -23,6 +23,6 @@ def delete_folder_contents(folder_path):
 if __name__ == "__main__":
     # Example usage
     folder_path = (
-        "projects/thurgau-irrigation/assets/Thurgau/ET_WaPOR_10m_dekadal_2018"
+        "projects/thurgau-irrigation/assets/Thurgau/VegetationPeriod"
     )
     delete_folder_contents(folder_path)

@@ -220,7 +220,7 @@ def get_harmonic_ts(
         yearly_sentinel_data,
         ["NDVI_int", "NDVI"],
         time_intervals,
-        {"agg_type": "geomedian"},
+        {"agg_type": "geomedian"}, # TODO: try different aggregation types
     ).map(lambda img: ndvi_band_to_float(ee.Image(img)))
 
     # Add time and constant bands

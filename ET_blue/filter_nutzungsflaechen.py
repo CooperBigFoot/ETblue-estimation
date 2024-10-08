@@ -83,29 +83,61 @@ def get_crops_to_exclude() -> Set[str]:
     }
 
 
-def get_rainfed_reference_crops() -> Set[str]:
+def get_rainfed_reference_crops() -> set:
     """
-    Returns a set of crop types to use as rainfed reference.
-
-    Returns:
-        Set[str]: A set of crop names to use as rainfed reference.
+    Returns a set of crop types to use as rainfed reference, excluding double-cropped fields.
     """
     return {"Kunstwiesen (ohne Weiden)", "Übrige Dauerwiesen (ohne Weiden)"}
 
 
-def create_crop_filters(crops_to_exclude: Set[str], rainfed_crops: Set[str]) -> tuple:
+def add_double_cropping_info(
+    feature_collection: ee.FeatureCollection, double_cropping_image: ee.Image
+) -> ee.FeatureCollection:
+    """
+    Adds double cropping information to each feature based on the median value of pixels within the feature.
+
+    Args:
+        feature_collection (ee.FeatureCollection): The input feature collection of crop fields.
+        double_cropping_image (ee.Image): Image with 'isDoubleCropping' band (1 for double-cropped, 0 for single-cropped).
+
+    Returns:
+        ee.FeatureCollection: Updated feature collection with 'isDoubleCropped' property.
+    """
+
+    filled_image = double_cropping_image.unmask(0)
+
+    def add_double_crop_property(feature):
+        median_value = (
+            filled_image.select("isDoubleCropping")
+            .reduceRegion(
+                reducer=ee.Reducer.median(),
+                geometry=feature.geometry(),
+                scale=10,  # Adjust scale as needed
+            )
+            .get("isDoubleCropping")
+        )
+
+        return feature.set("isDoubleCropped", median_value)
+
+    return feature_collection.map(add_double_crop_property)
+
+
+def create_crop_filters(crops_to_exclude: set, rainfed_crops: set) -> tuple:
     """
     Creates filters for excluding crops and identifying rainfed reference crops.
 
     Args:
-        crops_to_exclude (Set[str]): Set of crop names to exclude.
-        rainfed_crops (Set[str]): Set of crop names to use as rainfed reference.
+        crops_to_exclude (set): Set of crop names to exclude.
+        rainfed_crops (set): Set of crop names to use as rainfed reference.
 
     Returns:
         tuple: A tuple containing two ee.Filter objects (exclude_condition, rainfed_condition).
     """
     exclude_condition = ee.Filter.inList("nutzung", list(crops_to_exclude)).Not()
-    rainfed_condition = ee.Filter.inList("nutzung", list(rainfed_crops))
+    rainfed_condition = ee.Filter.And(
+        ee.Filter.inList("nutzung", list(rainfed_crops)),
+        ee.Filter.eq("isDoubleCropped", 0),  # Exclude double-cropped fields
+    )
     return exclude_condition, rainfed_condition
 
 
@@ -130,10 +162,15 @@ def filter_crops(
     return filtered_fields, rainfed_fields
 
 
-# Example usage
 def main():
-    # Assume we have a feature collection loaded
+    # Load your feature collection and double cropping image
     nutzung_collection = ee.FeatureCollection("path/to/your/nutzung/collection")
+    double_cropping_image = ee.Image("path/to/your/double_cropping_image")
+
+    # Add double cropping information to the feature collection
+    nutzung_collection_with_double_crop = add_double_cropping_info(
+        nutzung_collection, double_cropping_image
+    )
 
     crops_to_exclude = get_crops_to_exclude()
     rainfed_crops = get_rainfed_reference_crops()
@@ -143,7 +180,7 @@ def main():
     )
 
     filtered_fields, rainfed_fields = filter_crops(
-        nutzung_collection, exclude_filter, rainfed_filter
+        nutzung_collection_with_double_crop, exclude_filter, rainfed_filter
     )
 
     print("Filtered fields count:", filtered_fields.size().getInfo())
