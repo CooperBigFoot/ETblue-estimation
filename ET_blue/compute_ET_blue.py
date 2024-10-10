@@ -32,15 +32,10 @@ def compute_volumetric_et_blue(et_blue: ee.Image) -> ee.Image:
     Returns:
         ee.Image: Image containing ET blue values in cubic meters.
     """
-
+    
     date = et_blue.get("system:time_start")
     # Convert mm to m (divide by 1000) and multiply by pixel area
-    return (
-        et_blue.multiply(0.001)
-        .multiply(ee.Image.pixelArea())
-        .rename("ET_blue_m3")
-        .set("system:time_start", date)
-    )
+    return et_blue.multiply(0.001).multiply(ee.Image.pixelArea()).rename("ET_blue_m3").set("system:time_start", date)
 
 
 def sum_et_blue_for_period(et_blue_collection: ee.ImageCollection) -> ee.Image:
