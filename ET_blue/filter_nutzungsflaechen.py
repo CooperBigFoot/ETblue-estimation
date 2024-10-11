@@ -162,6 +162,19 @@ def filter_crops(
     return filtered_fields, rainfed_fields
 
 
+def get_unique_nutzung(feature_collection: ee.FeatureCollection) -> ee.List:
+    """
+    Gets all unique values for the 'nutzung' attribute in a FeatureCollection.
+
+    Args:
+        feature_collection (ee.FeatureCollection): The input FeatureCollection containing 'nutzung' property.
+
+    Returns:
+        ee.List: A list of unique 'nutzung' values.
+    """
+    return feature_collection.distinct("nutzung").aggregate_array("nutzung")
+
+
 def main():
     # Load your feature collection and double cropping image
     nutzung_collection = ee.FeatureCollection("path/to/your/nutzung/collection")

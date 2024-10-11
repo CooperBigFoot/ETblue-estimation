@@ -103,12 +103,15 @@ def extract_pixel_values(
     return ee.FeatureCollection(image_collection.map(extract_value))
 
 
-def aggregate_to_monthly(collection: ee.ImageCollection) -> ee.ImageCollection:
+def aggregate_to_monthly(
+    collection: ee.ImageCollection, bands: List[str] = ["downscaled"]
+) -> ee.ImageCollection:
     """
     Aggregate an image collection to monthly images, weighted by the number of days each image represents.
 
     Args:
-        collection (ee.ImageCollection): Input collection with 'downscaled' band.
+        collection (ee.ImageCollection): Input collection.
+        bands (List[str]): List of band names to aggregate. Defaults to ["downscaled"].
 
     Returns:
         ee.ImageCollection: Monthly aggregated image collection.
@@ -133,10 +136,12 @@ def aggregate_to_monthly(collection: ee.ImageCollection) -> ee.ImageCollection:
                 )
             )
             weight = next_date.difference(date, "day")
-            # Cast the 'downscaled' band to a consistent float type
+            # Cast the selected bands to a consistent float type
             return (
-                image.select("downscaled")
-                .cast({"downscaled": "float"})
+                image.select(bands)
+                .cast(
+                    ee.Dictionary.fromLists(bands, ee.List.repeat("float", len(bands)))
+                )
                 .multiply(weight)
             )
 
@@ -169,11 +174,11 @@ def aggregate_to_monthly(collection: ee.ImageCollection) -> ee.ImageCollection:
     )
 
     projection = collection.first().projection()
-    scale = collection.first().projection().nominalScale()
+    scale = projection.nominalScale()
 
     # Ensure consistent float type for the entire collection
     return aggregated.map(
-        lambda img: img.cast({"downscaled": "float"}).setDefaultProjection(
-            projection, None, scale
-        )
+        lambda img: img.cast(
+            ee.Dictionary.fromLists(bands, ee.List.repeat("float", len(bands)))
+        ).setDefaultProjection(projection, None, scale)
     ).sort("system:time_start")
