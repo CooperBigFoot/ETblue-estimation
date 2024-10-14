@@ -1,5 +1,3 @@
-# File: /src/visualization/plot_config.py
-
 import matplotlib.pyplot as plt
 import seaborn as sns
 
