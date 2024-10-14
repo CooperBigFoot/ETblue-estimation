@@ -1,5 +1,4 @@
 import ee
-from utils.ee_utils import set_negative_to_zero
 
 
 def compute_et_blue(et_total: ee.Image, et_green: ee.Image) -> ee.Image:
@@ -17,7 +16,7 @@ def compute_et_blue(et_total: ee.Image, et_green: ee.Image) -> ee.Image:
     date = et_total.get("system:time_start")
 
     et_blue = et_total.subtract(et_green).rename("ET_blue")
-    et_blue = set_negative_to_zero(et_blue)
+    # et_blue = set_negative_to_zero(et_blue)
 
     return et_blue.set("system:time_start", date)
 
@@ -32,10 +31,15 @@ def compute_volumetric_et_blue(et_blue: ee.Image) -> ee.Image:
     Returns:
         ee.Image: Image containing ET blue values in cubic meters.
     """
-    
+
     date = et_blue.get("system:time_start")
     # Convert mm to m (divide by 1000) and multiply by pixel area
-    return et_blue.multiply(0.001).multiply(ee.Image.pixelArea()).rename("ET_blue_m3").set("system:time_start", date)
+    return (
+        et_blue.multiply(0.001)
+        .multiply(ee.Image.pixelArea())
+        .rename("ET_blue_m3")
+        .set("system:time_start", date)
+    )
 
 
 def sum_et_blue_for_period(et_blue_collection: ee.ImageCollection) -> ee.Image:
@@ -71,6 +75,31 @@ def compute_et_blue_per_ha_year(
 
     et_blue_m3_ha_year = ee.Number(et_blue_sum_feature).divide(area.divide(10000))
     return feature.set("ET_blue_m3_ha_year", et_blue_m3_ha_year)
+
+
+def postprocess_et_blue(
+    et_blue_image_present: ee.Image, et_blue_image_past: ee.Image, threshold: float
+) -> ee.Image:
+    """
+    Postprocess ET blue images based on current and past values and a threshold.
+
+    Args:
+        et_blue_image_present (ee.Image): Current ET blue image.
+        et_blue_image_past (ee.Image): Past ET blue image.
+        threshold (float): Threshold value for ET blue.
+
+    Returns:
+        ee.Image: Postprocessed ET blue image.
+    """
+    # Create a condition mask
+    condition = et_blue_image_present.gte(threshold).And(
+        et_blue_image_present.add(et_blue_image_past.max(0)).gt(0)
+    )
+
+    # Apply the condition: if true, return et_blue_image_present, otherwise return 0
+    return ee.Image.where(condition, et_blue_image_present, 0).rename(
+        "ET_blue_postprocessed"
+    )
 
 
 # Example usage:
