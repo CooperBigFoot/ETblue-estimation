@@ -91,14 +91,17 @@ def postprocess_et_blue(
     Returns:
         ee.Image: Postprocessed ET blue image.
     """
+    date = et_blue_image_present.get("system:time_start")
     # Create a condition mask
     condition = et_blue_image_present.gte(threshold).And(
         et_blue_image_present.add(et_blue_image_past.max(0)).gt(0)
     )
 
     # Apply the condition: if true, return et_blue_image_present, otherwise return 0
-    return ee.Image.where(condition, et_blue_image_present, 0).rename(
-        "ET_blue_postprocessed"
+    return ee.Image(
+        et_blue_image_present.where(condition, 0)
+        .rename("ET_blue")
+        .set("system:time_start", date)
     )
 
 

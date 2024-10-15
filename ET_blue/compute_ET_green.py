@@ -131,7 +131,7 @@ def calculate_band_std_dev(
         # Extract the standard deviation value
         std_dev = std_dev_dict.get(band_name)
 
-        return ee.Number(std_dev).getInfo()
+        return ee.Number(std_dev)
 
     except ee.EEException as e:
         print(f"Error calculating standard deviation: {str(e)}")
