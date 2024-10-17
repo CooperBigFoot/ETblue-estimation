@@ -20,9 +20,54 @@ def delete_folder_contents(folder_path):
             print(f"Error deleting {asset_id}: {str(e)}")
 
 
+def keep_first_n_images(collection_id: str, n: int) -> str:
+    """
+    Keeps the first n images in a GEE image collection and deletes the rest.
+
+    Args:
+        collection_id (str): The asset ID of the image collection.
+        n (int): The number of images to keep.
+
+    Returns:
+        str: A message indicating the result of the operation.
+    """
+    try:
+
+        ee.Initialize(project="thurgau-irrigation")
+
+        collection = ee.ImageCollection(collection_id)
+
+        initial_size = collection.size().getInfo()
+
+        if n >= initial_size:
+            return f"No images deleted. Collection size ({initial_size}) is less than or equal to {n}."
+
+        image_ids = collection.aggregate_array("system:id").getInfo()
+
+        images_to_delete = image_ids[n:]
+
+        for image_id in images_to_delete:
+            ee.data.deleteAsset(image_id)
+
+        final_size = ee.ImageCollection(collection_id).size().getInfo()
+
+        return (
+            f"Operation successful. Initial collection size: {initial_size}, "
+            f"Final collection size: {final_size}, Images deleted: {initial_size - final_size}"
+        )
+
+    except ee.EEException as e:
+        return f"An error occurred: {str(e)}"
+
+
 if __name__ == "__main__":
-    # Example usage
-    folder_path = (
-        "projects/thurgau-irrigation/assets/Thurgau/VegetationPeriod"
-    )
-    delete_folder_contents(folder_path)
+
+    collection_id = "projects/thurgau-irrigation/assets/Thurgau/ET_green_jurisdiction_2018-2022"
+    delete_folder_contents(collection_id)
+
+    collection_id
+
+    # # Example usage of keep_first_n_images
+    # collection_id = "projects/thurgau-irrigation/assets/Thurgau/ET_blue_raw_2018-2022"
+    # result = keep_first_n_images(collection_id, 108)
+    # print(result)

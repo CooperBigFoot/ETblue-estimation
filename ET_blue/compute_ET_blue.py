@@ -16,7 +16,6 @@ def compute_et_blue(et_total: ee.Image, et_green: ee.Image) -> ee.Image:
     date = et_total.get("system:time_start")
 
     et_blue = et_total.subtract(et_green).rename("ET_blue")
-    # et_blue = set_negative_to_zero(et_blue)
 
     return et_blue.set("system:time_start", date)
 

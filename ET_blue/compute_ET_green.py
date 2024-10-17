@@ -1,30 +1,25 @@
 import ee
 
 
-def compute_et_green_by_grid(
+def compute_et_green(
     et_image: ee.Image,
     rainfed_reference: ee.FeatureCollection,
-    region: ee.Geometry,
-    grid_size: float = 10000,  # Default grid size in meters
+    feature_collection: ee.FeatureCollection,
 ) -> ee.Image:
     """
-    Compute ET green based on the given ET image and rainfed reference areas using a grid.
+    Compute ET green based on the given ET image and rainfed reference areas for each feature in the provided feature collection.
 
     Args:
         et_image (ee.Image): An image containing ET values.
         rainfed_reference (ee.FeatureCollection): A feature collection of rainfed reference areas.
-        region (ee.Geometry): The region to create the grid over.
-        grid_size (float): Size of each grid cell in meters.
+        feature_collection (ee.FeatureCollection): A feature collection over which to compute the ET green values.
 
     Returns:
-        ee.Image: An image with a single band 'ET_green' containing the computed ET green values for each grid cell.
+        ee.Image: An image with a single band 'ET_green' containing the computed ET green values for each feature.
     """
     projection = et_image.projection()
     scale = projection.nominalScale()
     time_start = et_image.get("system:time_start")
-
-    # Create a grid
-    grid = ee.FeatureCollection(region.coveringGrid(projection, grid_size))
 
     # Add a numeric property to rainfed_reference
     rainfed_reference = rainfed_reference.map(lambda f: f.set("dummy", 1))
@@ -34,39 +29,39 @@ def compute_et_green_by_grid(
         rainfed_reference.reduceToImage(["dummy"], ee.Reducer.first()).mask()
     )
 
-    # Compute the overall mean ET value (fallback for grid cells without rainfed areas)
+    # Compute the overall mean ET value (fallback for features without rainfed areas)
     overall_mean_et = ee.Number(
         masked_et.reduceRegion(
             reducer=ee.Reducer.mean(),
-            geometry=region,
+            geometry=feature_collection.geometry(),
             scale=scale,
             maxPixels=1e13,
         ).get("downscaled")
     )
 
-    # Compute mean ET values for each grid cell
-    def compute_grid_cell_mean(feature):
-        cell_mean = masked_et.reduceRegion(
+    # Compute mean ET values for each feature
+    def compute_feature_mean(feature):
+        feature_mean = masked_et.reduceRegion(
             reducer=ee.Reducer.mean(),
             geometry=feature.geometry(),
             scale=scale,
             maxPixels=1e13,
         ).get("downscaled")
 
-        # Use overall mean if grid cell has no valid ET values
+        # Use overall mean if feature has no valid ET values
         mean_et = ee.Number(
             ee.Algorithms.If(
-                ee.Algorithms.IsEqual(cell_mean, None), overall_mean_et, cell_mean
+                ee.Algorithms.IsEqual(feature_mean, None), overall_mean_et, feature_mean
             )
         )
 
         return feature.set("mean_et", mean_et)
 
-    grid_with_mean = grid.map(compute_grid_cell_mean)
+    features_with_mean = feature_collection.map(compute_feature_mean)
 
-    # Create an image with ET green values for each grid cell
+    # Create an image with ET green values for each feature
     et_green = (
-        grid_with_mean.reduceToImage(["mean_et"], ee.Reducer.first())
+        features_with_mean.reduceToImage(["mean_et"], ee.Reducer.first())
         .multiply(100)
         .int()
         .rename("ET_green")
