@@ -76,3 +76,25 @@ def update_image_timestamp(
     updated_collection = collection.map(update_image)
 
     return updated_collection
+
+
+def create_centered_date_ranges(image_list: ee.List, buffer_days: int = 5) -> ee.List:
+    """
+    Creates date ranges centered around the timestamps of a list of Earth Engine images.
+
+    Args:
+        image_list (ee.List): A list of Earth Engine images.
+        buffer_days (int): Number of days to buffer before and after the center date. Defaults to 5.
+
+    Returns:
+        ee.List: A list of lists, where each inner list contains two ee.Date objects
+                 representing the start and end of a date range, centered around the image timestamp.
+    """
+
+    def create_centered_range(image, buffer_days):
+        center_date = ee.Date(ee.Image(image).get("system:time_start"))
+        start_date = center_date.advance(-buffer_days, "day")
+        end_date = center_date.advance(buffer_days, "day")
+        return ee.List([start_date, end_date])
+
+    return image_list.map(lambda img: create_centered_range(img, buffer_days))

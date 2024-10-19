@@ -182,3 +182,57 @@ def aggregate_to_monthly(
             ee.Dictionary.fromLists(bands, ee.List.repeat("float", len(bands)))
         ).setDefaultProjection(projection, None, scale)
     ).sort("system:time_start")
+
+
+def back_to_float(image: ee.Image, scale: int) -> ee.Image:
+    """
+    Convert an image to float and divide by the scale
+
+    Args:
+        image: The image to convert
+        scale: The scale to divide by
+
+    Returns:
+        The image converted to float and divided by the scale
+    """
+    date = image.get("system:time_start")
+    return image.toFloat().divide(scale).set("system:time_start", date)
+
+
+def back_to_int(image: ee.Image, scale: int) -> ee.Image:
+    """
+    Convert an image to int and multiply by the scale
+
+    Args:
+        image: The image to convert
+        scale: The scale to multiply by
+
+    Returns:
+        The image converted to int and multiplied by the scale
+    """
+    date = image.get("system:time_start")
+    return image.toInt().multiply(scale).set("system:time_start", date)
+
+
+def export_image_to_asset(
+    image: ee.Image,
+    asset_id: str,
+    task_name: str,
+    year: int,
+    aoi: ee.Geometry,
+    max_pixels: int = 1e13,
+) -> ee.batch.Task:
+    """
+    Export an image to an Earth Engine asset.
+    """
+    task = ee.batch.Export.image.toAsset(
+        image=image,
+        description=task_name,
+        assetId=asset_id,
+        region=aoi,
+        scale=10,
+        maxPixels=max_pixels,
+    )
+    print(f"Exporting {task_name} for {year} to {asset_id}")
+    task.start()
+    return task

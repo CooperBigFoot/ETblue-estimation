@@ -175,6 +175,7 @@ def get_unique_nutzung(feature_collection: ee.FeatureCollection) -> ee.List:
     return feature_collection.distinct("nutzung").aggregate_array("nutzung")
 
 
+# Example usage
 def main():
     # Load your feature collection and double cropping image
     nutzung_collection = ee.FeatureCollection("path/to/your/nutzung/collection")
