@@ -85,7 +85,9 @@ class HarmonicRegressor:
         """
         if self._regression_coefficients is None:
             raise ValueError("Model has not been fitted yet. Call fit() first.")
+
         harmonic_collection = self._prepare_harmonic_collection(image_collection)
+
         return self._compute_fitted_values(
             harmonic_collection, self._regression_coefficients
         )

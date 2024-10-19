@@ -73,7 +73,16 @@ def prepare_harmonized_data(
     time_intervals: ee.List,
     agg_type: str = "geomedian",
 ) -> ee.ImageCollection:
-    """Prepare harmonized data from Sentinel-2 imagery."""
+    """Prepare harmonized data from Sentinel-2 imagery.
+
+    Args:
+        yearly_sentinel_data (ee.ImageCollection): Sentinel-2 imagery for a year.
+        time_intervals (ee.List): List of time intervals for aggregation.
+        agg_type (str): Aggregation type for harmonized_ts function. Default is "geomedian".
+
+    Returns:
+        ee.ImageCollection: Harmonized time series of Sentinel-2 imagery.
+    """
     harmonized_data = harmonized_ts(
         yearly_sentinel_data.map(ndvi_band_to_int),
         ["NDVI_int", "NDVI"],
