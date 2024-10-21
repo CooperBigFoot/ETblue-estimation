@@ -93,7 +93,7 @@ def postprocess_et_blue(
     date = et_blue_image_present.get("system:time_start")
     # Create a condition mask
     condition = et_blue_image_present.gte(threshold).And(
-        et_blue_image_present.add(et_blue_image_past.max(0)).gt(0)
+        et_blue_image_present.add(et_blue_image_past.min(0)).gt(0)
     )
 
     # Apply the condition: if true, return et_blue_image_present, otherwise return 0

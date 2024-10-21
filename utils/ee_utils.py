@@ -211,7 +211,7 @@ def back_to_int(image: ee.Image, scale: int) -> ee.Image:
         The image converted to int and multiplied by the scale
     """
     date = image.get("system:time_start")
-    return image.toInt().multiply(scale).set("system:time_start", date)
+    return image.multiply(scale).toInt().set("system:time_start", date)
 
 
 def export_image_to_asset(
