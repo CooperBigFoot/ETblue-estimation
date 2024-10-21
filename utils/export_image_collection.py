@@ -43,8 +43,6 @@ def export_collection_to_assets(
     project_name: str,
     asset_folder: str,
     scale: int = 30,
-    max_concurrent: int = 3,
-    delay: int = 60,
 ) -> None:
     """
     Export an entire image collection to assets.
@@ -54,8 +52,7 @@ def export_collection_to_assets(
         region (ee.Geometry): Region to export.
         project_name (str): Name of your GEE project.
         asset_folder (str): Name of the asset folder to export to.
-        max_concurrent (int, optional): Maximum number of concurrent export tasks. Defaults to 3.
-        delay (int, optional): Delay in seconds between starting tasks. Defaults to 60.
+        scale (int, optional): Scale in meters. Defaults to 30.
     """
     image_list = collection.toList(collection.size())
     size = image_list.size().getInfo()
@@ -64,15 +61,11 @@ def export_collection_to_assets(
 
     for i in range(size):
         image = ee.Image(image_list.get(i))
-        task = export_image_to_asset(image, region, project_name, asset_folder, scale=scale)
-
-        while len(active_tasks) >= max_concurrent:
-            active_tasks = [task for task in active_tasks if task.active()]
-            time.sleep(delay)
-
+        task = export_image_to_asset(
+            image, region, project_name, asset_folder, scale=scale
+        )
         task.start()
         active_tasks.append(task)
         print(f"Started export task for image {i+1} of {size}")
-        time.sleep(delay)
 
     print("All export tasks have been started.")
