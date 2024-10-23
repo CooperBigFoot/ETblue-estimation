@@ -82,6 +82,11 @@ def postprocess_et_blue(
     """
     Postprocess ET blue images based on current and past values and a threshold.
 
+    Keeps the current ET blue value only if:
+    1. The current value is >= threshold AND
+    2. The current value plus any negative value from previous month is > 0
+    Otherwise sets the pixel to 0.
+
     Args:
         et_blue_image_present (ee.Image): Current ET blue image.
         et_blue_image_past (ee.Image): Past ET blue image.
@@ -91,14 +96,19 @@ def postprocess_et_blue(
         ee.Image: Postprocessed ET blue image.
     """
     date = et_blue_image_present.get("system:time_start")
-    # Create a condition mask
-    condition = et_blue_image_present.gte(threshold).And(
-        et_blue_image_present.add(et_blue_image_past.min(0)).gt(0)
+
+    # Create condition mask:
+    condition = (
+        # Condition 1: Current value >= threshold
+        et_blue_image_present.gte(threshold).And(
+            # Condition 2: Current value + min(past_value, 0) > 0
+            et_blue_image_present.add(et_blue_image_past.min(0)).gt(0)
+        )
     )
 
-    # Apply the condition: if true, return et_blue_image_present, otherwise return 0
-    return ee.Image(
-        et_blue_image_present.where(condition, 0)
+    # Where condition is false, set to 0. Keep original values where condition is true
+    return (
+        et_blue_image_present.where(condition.Not(), 0)
         .rename("ET_blue")
         .set("system:time_start", date)
     )
