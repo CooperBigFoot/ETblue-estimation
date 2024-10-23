@@ -236,3 +236,40 @@ def export_image_to_asset(
     print(f"Exporting {task_name} for {year} to {asset_id}")
     task.start()
     return task
+
+
+def print_value_ranges(
+    collection: ee.ImageCollection, band_name: str = "ET_blue"
+) -> None:
+    """
+    Print the minimum and maximum values for each image in the collection.
+
+    Args:
+        collection (ee.ImageCollection): Collection of images to analyze
+        band_name (str): Name of the band to analyze
+    """
+
+    def get_minmax(image):
+        stats = image.select(band_name).reduceRegion(
+            reducer=ee.Reducer.minMax(),
+            geometry=image.geometry(),
+            scale=30,
+            maxPixels=1e9,
+        )
+        return image.set(
+            {"min": stats.get(f"{band_name}_min"), "max": stats.get(f"{band_name}_max")}
+        )
+
+    # Map the minmax computation over the collection
+    collection_with_stats = collection.map(get_minmax)
+
+    # Get the stats as lists
+    stats = (
+        collection_with_stats.aggregate_array("min")
+        .zip(collection_with_stats.aggregate_array("max"))
+        .getInfo()
+    )
+
+    # Print results
+    for i, (min_val, max_val) in enumerate(stats):
+        print(f"Image {i + 1}: Min = {min_val:.2f}, Max = {max_val:.2f}")
