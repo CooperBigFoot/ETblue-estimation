@@ -162,12 +162,15 @@ def filter_crops(
     return filtered_fields, rainfed_fields
 
 
-def get_unique_nutzung(feature_collection: ee.FeatureCollection) -> ee.List:
+def get_unique_nutzung(
+    feature_collection: ee.FeatureCollection, nutzung_field_name: str = "nutzung"
+) -> ee.List:
     """
     Gets all unique values for the 'nutzung' attribute in a FeatureCollection.
 
     Args:
         feature_collection (ee.FeatureCollection): The input FeatureCollection containing 'nutzung' property.
+        nutzung_field_name (str): The name of the 'nutzung' field.
 
     Returns:
         ee.List: A list of unique 'nutzung' values.
