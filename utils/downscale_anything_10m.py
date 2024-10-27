@@ -144,7 +144,7 @@ class Downscaler:
         resolution: int,
     ) -> ee.Image:
         """
-        Performs the downscaling process.
+        Performs the downscaling process with explicit projection handling.
 
         Args:
             coarse_independent_vars (ee.Image): Coarse resolution image with independent variables.
@@ -154,30 +154,67 @@ class Downscaler:
             resolution (int): The resolution of the coarse image.
 
         Returns:
-            ee.Image: The downscaled image.
+            ee.Image: The downscaled image with consistent projection information.
         """
         try:
+            # Get fine resolution properties
             fine_projection = fine_independent_vars.projection()
-            fine_date = fine_independent_vars.date()
             fine_scale = fine_projection.nominalScale()
+            fine_date = fine_independent_vars.date()
 
+            # Store original coarse projection for reference
+            coarse_projection = coarse_dependent_var.projection()
+            coarse_scale = coarse_projection.nominalScale()
+
+            # Perform regression at coarse resolution
             regression_result = self.perform_regression(
                 coarse_independent_vars, coarse_dependent_var, geometry, resolution
             )
             self.extract_coefficients(regression_result)
 
-            coarse_modeled = self.apply_regression(coarse_independent_vars)
-            residuals = self.compute_residuals(coarse_dependent_var, coarse_modeled)
-            smoothed_residuals = self.apply_gaussian_smoothing(residuals)
+            # Calculate residuals at coarse resolution
+            coarse_modeled = self.apply_regression(
+                coarse_independent_vars
+            ).setDefaultProjection(crs=coarse_projection, scale=coarse_scale)
 
-            fine_downscaled = self.apply_regression(fine_independent_vars)
-            final_downscaled = fine_downscaled.add(smoothed_residuals)
+            residuals = self.compute_residuals(
+                coarse_dependent_var, coarse_modeled
+            ).setDefaultProjection(crs=coarse_projection, scale=coarse_scale)
 
+            # Smooth residuals while maintaining coarse projection
+            smoothed_residuals = self.apply_gaussian_smoothing(
+                residuals
+            ).setDefaultProjection(crs=coarse_projection, scale=coarse_scale)
+
+            # Perform downscaling at fine resolution
+            fine_downscaled = self.apply_regression(
+                fine_independent_vars
+            ).setDefaultProjection(crs=fine_projection, scale=fine_scale)
+
+            # Reproject smoothed residuals to fine resolution
+            smoothed_residuals_reprojected = smoothed_residuals.reproject(
+                crs=fine_projection, scale=fine_scale
+            )
+
+            # Combine downscaled result with reprojected residuals
+            final_downscaled = fine_downscaled.add(smoothed_residuals_reprojected)
+
+            # Set final projection and metadata
             return (
                 final_downscaled.rename("downscaled")
-                .set("system:time_start", fine_date.millis())
-                .setDefaultProjection(fine_projection, None, fine_scale)
+                .set(
+                    {
+                        "system:time_start": fine_date.millis(),
+                        "original_coarse_scale": coarse_scale,
+                        "final_scale": fine_scale,
+                        "original_coarse_projection": coarse_projection.wkt(),
+                        "final_projection": fine_projection.wkt(),
+                    }
+                )
+                .setDefaultProjection(crs=fine_projection, scale=fine_scale)
+                .reproject(crs=fine_projection, scale=fine_scale)
             )
+
         except Exception as e:
             logging.error(f"Error in downscaling process: {str(e)}")
             raise

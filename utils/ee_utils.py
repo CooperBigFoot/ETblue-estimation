@@ -1,5 +1,5 @@
 import ee
-from typing import List
+from typing import List, Optional
 
 
 def set_negative_to_zero(image: ee.Image) -> ee.Image:
@@ -16,34 +16,45 @@ def set_negative_to_zero(image: ee.Image) -> ee.Image:
 
 
 def merge_collections(
-    years: List[int], asset_name: str, special_char: str = None
+    years: List[int], asset_name: str, special_char: Optional[str] = None
 ) -> ee.ImageCollection:
     """
-    Merge collections for multiple years.
+    Merge Earth Engine ImageCollections for multiple years.
 
     Args:
-        years (list): List of years to process.
-        asset_name (str): Name of the asset to merge.
-        special_char (str): Special character to append to the asset name. Defaults to None.
+        years: List of years to process
+        asset_name: Base name of the asset to merge
+        special_char: Optional character to append to asset name
 
     Returns:
-        ee.ImageCollection: Merged collection for all years.
+        Merged ImageCollection with consistent projection
     """
+    if not years:
+        raise ValueError("Years list cannot be empty")
+
+    collections = []
+    for year in years:
+        path = f"{asset_name}_{year}"
+        if special_char:
+            path = f"{path}_{special_char}"
+
+        collection = ee.ImageCollection(path)
+        collections.append(collection)
+
+    # Get projection from first collection
+    projection = collections[0].first().projection()
+
+    # Apply projection and merge
     collections = [
-        ee.ImageCollection(
-            f"{asset_name}_{year}{f'_{special_char}' if special_char else ''}"
-        )
-        .sort("system:time_start")
-        .map(set_negative_to_zero)
-        for year in years
+        collection.map(lambda img: img.setDefaultProjection(projection))
+        for collection in collections
     ]
 
-    # Merge all collections into one
-    merged_collection = collections[0]
+    merged = collections[0]
     for collection in collections[1:]:
-        merged_collection = merged_collection.merge(collection)
+        merged = merged.merge(collection)
 
-    return merged_collection
+    return merged
 
 
 def extract_pixel_values(
@@ -221,19 +232,40 @@ def export_image_to_asset(
     year: int,
     aoi: ee.Geometry,
     max_pixels: int = 1e13,
+    crs: str = "EPSG:4326",
+    scale: int = 10,
 ) -> ee.batch.Task:
     """
-    Export an image to an Earth Engine asset.
+    Export an image to an Earth Engine asset with consistent projection and scale.
+
+    Args:
+        image (ee.Image): Image to export
+        asset_id (str): Destination asset ID
+        task_name (str): Name of the export task
+        year (int): Year of the data
+        aoi (ee.Geometry): Area of interest for export
+        max_pixels (int, optional): Maximum number of pixels to export. Defaults to 1e13.
+        crs (str, optional): Coordinate reference system. Defaults to "EPSG:4326".
+        scale (int, optional): Resolution in meters. Defaults to 10.
+
+    Returns:
+        ee.batch.Task: The export task
     """
+    # Ensure consistent projection for export
+    image_to_export = image.setDefaultProjection(crs=crs, scale=scale)
+
     task = ee.batch.Export.image.toAsset(
-        image=image,
+        image=image_to_export,
         description=task_name,
         assetId=asset_id,
         region=aoi,
-        scale=10,
+        crs=crs,
+        scale=scale,
         maxPixels=max_pixels,
     )
+
     print(f"Exporting {task_name} for {year} to {asset_id}")
+    print(f"Using projection {crs} at {scale}m resolution")
     task.start()
     return task
 
