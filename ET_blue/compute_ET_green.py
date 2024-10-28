@@ -62,8 +62,6 @@ def compute_et_green(
     # Create an image with ET green values for each feature
     et_green = (
         features_with_mean.reduceToImage(["mean_et"], ee.Reducer.first())
-        .multiply(100)
-        .int()
         .rename("ET_green")
     )
 
