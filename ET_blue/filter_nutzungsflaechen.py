@@ -91,7 +91,7 @@ def get_rainfed_reference_crops() -> set:
 
 
 def add_double_cropping_info(
-    feature_collection: ee.FeatureCollection, double_cropping_image: ee.Image
+    feature_collection: ee.FeatureCollection, double_cropping_image: ee.Image, scale=10
 ) -> ee.FeatureCollection:
     """
     Adds double cropping information to each feature based on the median value of pixels within the feature.
@@ -99,6 +99,7 @@ def add_double_cropping_info(
     Args:
         feature_collection (ee.FeatureCollection): The input feature collection of crop fields.
         double_cropping_image (ee.Image): Image with 'isDoubleCropping' band (1 for double-cropped, 0 for single-cropped).
+        scale (int): The scale to use for reducing the image.
 
     Returns:
         ee.FeatureCollection: Updated feature collection with 'isDoubleCropped' property.
@@ -112,7 +113,7 @@ def add_double_cropping_info(
             .reduceRegion(
                 reducer=ee.Reducer.median(),
                 geometry=feature.geometry(),
-                scale=10,  # Adjust scale as needed
+                scale=scale,
             )
             .get("isDoubleCropping")
         )

@@ -5,6 +5,7 @@ def compute_et_green(
     et_image: ee.Image,
     rainfed_reference: ee.FeatureCollection,
     feature_collection: ee.FeatureCollection,
+    et_band_name: str = "downscaled",
 ) -> ee.Image:
     """
     Compute ET green based on the given ET image and rainfed reference areas for each feature in the provided feature collection.
@@ -13,6 +14,7 @@ def compute_et_green(
         et_image (ee.Image): An image containing ET values.
         rainfed_reference (ee.FeatureCollection): A feature collection of rainfed reference areas.
         feature_collection (ee.FeatureCollection): A feature collection over which to compute the ET green values.
+        et_band_name (str, optional): The name of the band in the ET image containing the ET values.
 
     Returns:
         ee.Image: An image with a single band 'ET_green' containing the computed ET green values for each feature.
@@ -36,7 +38,7 @@ def compute_et_green(
             geometry=feature_collection.geometry(),
             scale=scale,
             maxPixels=1e13,
-        ).get("downscaled")
+        ).get(et_band_name)
     )
 
     # Compute mean ET values for each feature
@@ -46,7 +48,7 @@ def compute_et_green(
             geometry=feature.geometry(),
             scale=scale,
             maxPixels=1e13,
-        ).get("downscaled")
+        ).get(et_band_name)
 
         # Use overall mean if feature has no valid ET values
         mean_et = ee.Number(
@@ -60,9 +62,8 @@ def compute_et_green(
     features_with_mean = feature_collection.map(compute_feature_mean)
 
     # Create an image with ET green values for each feature
-    et_green = (
-        features_with_mean.reduceToImage(["mean_et"], ee.Reducer.first())
-        .rename("ET_green")
+    et_green = features_with_mean.reduceToImage(["mean_et"], ee.Reducer.first()).rename(
+        "ET_green"
     )
 
     return et_green.setDefaultProjection(projection, None, scale).set(
