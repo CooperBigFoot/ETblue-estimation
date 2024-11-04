@@ -62,7 +62,7 @@ def keep_first_n_images(collection_id: str, n: int) -> str:
 
 if __name__ == "__main__":
 
-    collection_id = "projects/thurgau-irrigation/assets/Zuerich/ET_blue_m3_ha_yr_per_field_from_dekadal_wapor_10m_ZH_2022"
+    collection_id = "projects/thurgau-irrigation/assets/Zuerich/ET_blue_m3_ha_yr_per_field_from_monthly_landsat_30m_ZH_2022"
     
     delete_folder_contents(collection_id)
 

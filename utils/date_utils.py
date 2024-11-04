@@ -98,3 +98,27 @@ def create_centered_date_ranges(image_list: ee.List, buffer_days: int = 5) -> ee
         return ee.List([start_date, end_date])
 
     return image_list.map(lambda img: create_centered_range(img, buffer_days))
+
+
+def set_to_first_of_month(collection: ee.ImageCollection) -> ee.ImageCollection:
+    """
+    Updates the dates of all images in a collection to the first day of their respective months.
+
+    Args:
+        collection (ee.ImageCollection): Input image collection
+
+    Returns:
+        ee.ImageCollection: Collection with updated dates
+    """
+
+    def update_date(image):
+        # Get the current timestamp
+        date = ee.Date(image.get("system:time_start"))
+
+        # Create new date for first of the month
+        new_date = ee.Date.fromYMD(date.get("year"), date.get("month"), 1)
+
+        # Update the image with new timestamp
+        return image.set("system:time_start", new_date.millis())
+
+    return collection.map(update_date)
