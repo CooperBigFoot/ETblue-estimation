@@ -3,6 +3,69 @@ from typing import Dict, List, Union, Optional
 import logging
 
 
+def resample_collection(
+    collection: ee.ImageCollection, reference_collection: ee.ImageCollection
+) -> ee.ImageCollection:
+    """
+    Resample an image collection to match the resolution and projection of a reference collection.
+    This function is specifically designed to resample Sentinel-2 imagery to match WAPOR ET data.
+
+    Args:
+        collection (ee.ImageCollection): The input Sentinel-2 image collection to be resampled.
+        reference_collection (ee.ImageCollection): The reference WAPOR ET image collection.
+
+    Returns:
+        ee.ImageCollection: The resampled Sentinel-2 image collection.
+    """
+    # Get the projection and scale from the first image of the reference collection
+    reference_image = reference_collection.first()
+    target_projection = reference_image.projection()
+    target_scale = target_projection.nominalScale()
+
+    def resample_image(image: ee.Image) -> ee.Image:
+        """
+        Resample a single image to match the target projection and scale.
+
+        Args:
+            image (ee.Image): Input image to resample.
+
+        Returns:
+            ee.Image: Resampled image with consistent projection and scale.
+        """
+        # Store original metadata
+        original_projection = image.projection()
+        original_scale = original_projection.nominalScale()
+
+        # Reproject each band separately to maintain band-specific properties
+        band_names = image.bandNames()
+
+        def resample_band(band_name: ee.String) -> ee.Image:
+            band = image.select([band_name])
+            return band.reproject(
+                crs=target_projection, scale=target_scale, crsTransform=None
+            ).setDefaultProjection(crs=target_projection, scale=target_scale)
+
+        # Map over bands and resample each
+        resampled_bands = band_names.map(lambda name: resample_band(ee.String(name)))
+
+        # Combine resampled bands
+        resampled = ee.ImageCollection(resampled_bands).toBands().rename(band_names)
+
+        # Set metadata about the resampling operation
+        return resampled.copyProperties(image).set(
+            {
+                "system:time_start": image.get("system:time_start"),
+                "resampled": True,
+                "original_scale": original_scale,
+                "target_scale": target_scale,
+                "original_projection": original_projection.wkt(),
+                "target_projection": target_projection.wkt(),
+            }
+        )
+
+    return collection.map(resample_image)
+
+
 class Downscaler:
     """
     A class to perform downscaling of Earth Engine images using regression-based methods.
