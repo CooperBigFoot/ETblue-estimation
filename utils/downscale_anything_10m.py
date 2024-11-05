@@ -66,6 +66,49 @@ def resample_collection(
     return collection.map(resample_image)
 
 
+def resample_to_100m(collection: ee.ImageCollection) -> ee.ImageCollection:
+    """
+    Resample a 30m Landsat ET collection to 100m resolution.
+
+    Args:
+        collection (ee.ImageCollection): The input 30m Landsat ET collection
+
+    Returns:
+        ee.ImageCollection: The resampled 100m ET collection
+    """
+    target_scale = 100  # 100 meters
+
+    def resample_image(image: ee.Image) -> ee.Image:
+        """
+        Resample a single image to 100m resolution.
+
+        Args:
+            image (ee.Image): Input image to resample
+
+        Returns:
+            ee.Image: Resampled image at 100m resolution
+        """
+        # Store original metadata
+        original_projection = image.projection()
+        original_scale = original_projection.nominalScale()
+
+        # Reproject the image to 100m resolution
+        resampled = image.reproject(crs=original_projection, scale=target_scale)
+
+        # Copy properties and add metadata about resampling
+        return resampled.copyProperties(image).set(
+            {
+                "system:time_start": image.get("system:time_start"),
+                "resampled": True,
+                "original_scale": original_scale,
+                "target_scale": target_scale,
+                "original_projection": original_projection.wkt(),
+            }
+        )
+
+    return collection.map(resample_image)
+
+
 class Downscaler:
     """
     A class to perform downscaling of Earth Engine images using regression-based methods.
